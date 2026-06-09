@@ -48,3 +48,6 @@ Project JSON files preserve the current annotation session and can be loaded bac
 - Calibration defines the X axis from calibration point 1 to calibration point 2. The Y axis is perpendicular to that direction.
 - The system is implemented as static HTML, CSS, and JavaScript.
 
+## License
+
+AnnoS is released under the MIT License. See `LICENSE` for details.
