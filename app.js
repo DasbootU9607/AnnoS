@@ -245,6 +245,10 @@ function updateSidebarButtons() {
   els.leftSidebarToggle.setAttribute("aria-label", els.leftSidebarToggle.title);
   els.rightSidebarToggle.title = rightCollapsed ? "Open right sidebar" : "Collapse right sidebar";
   els.rightSidebarToggle.setAttribute("aria-label", els.rightSidebarToggle.title);
+  const leftArrow = els.leftSidebarToggle.querySelector(".tab-arrow");
+  const rightArrow = els.rightSidebarToggle.querySelector(".tab-arrow");
+  if (leftArrow) leftArrow.textContent = leftCollapsed ? "›" : "‹";
+  if (rightArrow) rightArrow.textContent = rightCollapsed ? "‹" : "›";
 }
 
 function toggleSidebar(side) {
