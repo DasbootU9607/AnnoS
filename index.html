@@ -28,9 +28,6 @@
         </div>
       </header>
 
-      <button id="leftSidebarToggle" class="sidebar-toggle left-sidebar-toggle" aria-label="Collapse left sidebar" title="Collapse left sidebar">‹</button>
-      <button id="rightSidebarToggle" class="sidebar-toggle right-sidebar-toggle" aria-label="Collapse right sidebar" title="Collapse right sidebar">›</button>
-
       <main class="workspace">
         <aside class="panel left-panel">
           <section class="panel-section">
@@ -86,19 +83,31 @@
 
         <section class="center-panel">
           <div class="modebar" role="toolbar" aria-label="Annotation modes">
-            <div class="tool-group">
-              <button class="mode-btn active" data-mode="select">Select</button>
-              <button class="mode-btn" data-mode="calibration">Calibrate</button>
-              <button class="mode-btn left-mode" data-mode="left">Left</button>
-              <button class="mode-btn right-mode" data-mode="right">Right</button>
-              <button class="mode-btn" data-mode="measure">Measure</button>
+            <div class="modebar-left">
+              <button id="leftSidebarToggle" class="sidebar-tab left-sidebar-toggle" aria-label="Collapse left sidebar" title="Collapse left sidebar">
+                <span class="tab-label">Metadata</span>
+                <span class="tab-arrow" aria-hidden="true">‹</span>
+              </button>
+              <div class="tool-group">
+                <button class="mode-btn active" data-mode="select">Select</button>
+                <button class="mode-btn" data-mode="calibration">Calibrate</button>
+                <button class="mode-btn left-mode" data-mode="left">Left</button>
+                <button class="mode-btn right-mode" data-mode="right">Right</button>
+                <button class="mode-btn" data-mode="measure">Measure</button>
+              </div>
             </div>
-            <div class="tool-group secondary-tools">
-              <label class="compact-check"><input id="autoSwitch" type="checkbox" checked /> Auto switch</label>
-              <button id="undoBtn" class="ghost-btn small">Undo</button>
-              <button id="redoBtn" class="ghost-btn small">Redo</button>
-              <button id="deletePointBtn" class="danger-btn small">Delete</button>
-              <button id="resetViewBtn" class="ghost-btn small">Reset view</button>
+            <div class="modebar-right">
+              <div class="tool-group secondary-tools">
+                <label class="compact-check"><input id="autoSwitch" type="checkbox" checked /> Auto switch</label>
+                <button id="undoBtn" class="ghost-btn small">Undo</button>
+                <button id="redoBtn" class="ghost-btn small">Redo</button>
+                <button id="deletePointBtn" class="danger-btn small">Delete</button>
+                <button id="resetViewBtn" class="ghost-btn small">Reset view</button>
+              </div>
+              <button id="rightSidebarToggle" class="sidebar-tab right-sidebar-toggle" aria-label="Collapse right sidebar" title="Collapse right sidebar">
+                <span class="tab-arrow" aria-hidden="true">›</span>
+                <span class="tab-label">Review</span>
+              </button>
             </div>
           </div>
 
