@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AnnoS</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark">A</div>
+          <div>
+            <h1>AnnoS</h1>
+            <div class="eyebrow">PosePro manual ground truth annotation</div>
+          </div>
+        </div>
+        <div class="topbar-meta">
+          <span id="currentVideoLabel">No video loaded</span>
+          <span id="saveStatus" class="status-pill">Unsaved local session</span>
+        </div>
+        <div class="topbar-actions">
+          <button id="loadProjectBtn" class="ghost-btn">Load JSON</button>
+          <button id="saveProjectBtn" class="ghost-btn">Save JSON</button>
+          <button id="exportAllBtn" class="primary-btn">Export CSVs</button>
+          <input id="projectInput" type="file" accept="application/json,.json" hidden />
+        </div>
+      </header>
+
+      <button id="leftSidebarToggle" class="sidebar-toggle left-sidebar-toggle" aria-label="Collapse left sidebar" title="Collapse left sidebar">‹</button>
+      <button id="rightSidebarToggle" class="sidebar-toggle right-sidebar-toggle" aria-label="Collapse right sidebar" title="Collapse right sidebar">›</button>
+
+      <main class="workspace">
+        <aside class="panel left-panel">
+          <section class="panel-section">
+            <h2>Video</h2>
+            <label class="file-drop">
+              <input id="videoInput" type="file" accept="video/*" />
+              <span>Choose local walking video</span>
+            </label>
+            <div class="info-grid">
+              <div><span>File</span><strong id="fileName">-</strong></div>
+              <div><span>Duration</span><strong id="durationInfo">-</strong></div>
+              <div><span>Resolution</span><strong id="resolutionInfo">-</strong></div>
+              <div><span>Frames</span><strong id="frameCountInfo">-</strong></div>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <h2>Metadata</h2>
+            <div class="form-grid">
+              <label>Video ID<input id="videoId" type="text" placeholder="video_001" /></label>
+              <label>Subject ID<input id="subjectId" type="text" placeholder="subj_001" /></label>
+              <label>Video Date<input id="videoDate" type="date" /></label>
+              <label>Reviewer<input id="reviewer" type="text" placeholder="annotator id" /></label>
+              <label>Camera Angle
+                <select id="cameraAngle">
+                  <option value="">Unspecified</option>
+                  <option>side</option>
+                  <option>near-side</option>
+                  <option>front-oblique</option>
+                  <option>rear-oblique</option>
+                </select>
+              </label>
+              <label>Camera Status
+                <select id="cameraStatus">
+                  <option>fixed</option>
+                  <option>mild shaking</option>
+                  <option>obvious shaking</option>
+                </select>
+              </label>
+              <label>FPS<input id="fpsInput" type="number" min="1" step="0.01" value="30" /></label>
+              <label>Usability
+                <select id="usabilityGrade">
+                  <option>A</option>
+                  <option>B</option>
+                  <option>C</option>
+                  <option>D</option>
+                </select>
+              </label>
+              <label class="wide">Notes<textarea id="videoNote" rows="4" placeholder="privacy-safe annotation notes"></textarea></label>
+            </div>
+          </section>
+        </aside>
+
+        <section class="center-panel">
+          <div class="modebar" role="toolbar" aria-label="Annotation modes">
+            <div class="tool-group">
+              <button class="mode-btn active" data-mode="select">Select</button>
+              <button class="mode-btn" data-mode="calibration">Calibrate</button>
+              <button class="mode-btn left-mode" data-mode="left">Left</button>
+              <button class="mode-btn right-mode" data-mode="right">Right</button>
+              <button class="mode-btn" data-mode="measure">Measure</button>
+            </div>
+            <div class="tool-group secondary-tools">
+              <label class="compact-check"><input id="autoSwitch" type="checkbox" checked /> Auto switch</label>
+              <button id="undoBtn" class="ghost-btn small">Undo</button>
+              <button id="redoBtn" class="ghost-btn small">Redo</button>
+              <button id="deletePointBtn" class="danger-btn small">Delete</button>
+              <button id="resetViewBtn" class="ghost-btn small">Reset view</button>
+            </div>
+          </div>
+
+          <div id="videoViewport" class="video-viewport">
+            <div id="mediaLayer" class="media-layer">
+              <video id="video" preload="metadata"></video>
+              <canvas id="overlayCanvas"></canvas>
+            </div>
+            <div id="emptyState" class="empty-state">
+              <strong>No video imported</strong>
+              <span>Select a local video file to start calibration and annotation.</span>
+            </div>
+            <div id="tooltip" class="tooltip" hidden></div>
+          </div>
+
+          <div class="playback-bar">
+            <button id="playPauseBtn" class="primary-btn">Play</button>
+            <button id="prevFrameBtn" class="ghost-btn">-1f</button>
+            <button id="nextFrameBtn" class="ghost-btn">+1f</button>
+            <button id="jumpBackBtn" class="ghost-btn">-10f</button>
+            <button id="jumpForwardBtn" class="ghost-btn">+10f</button>
+            <input id="timeline" type="range" min="0" max="0" step="0.001" value="0" />
+            <select id="speedSelect" title="Playback speed">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="0.75">0.75x</option>
+              <option value="1" selected>1x</option>
+              <option value="1.5">1.5x</option>
+              <option value="2">2x</option>
+            </select>
+            <span id="timeReadout">0.000s</span>
+            <span id="frameReadout">Frame 0</span>
+          </div>
+        </section>
+
+        <aside class="panel right-panel">
+          <section class="panel-section result-section">
+            <h2>Truth Results</h2>
+            <div id="resultsGrid" class="metrics-grid"></div>
+          </section>
+
+          <section class="panel-section">
+            <h2>Calibration</h2>
+            <div class="form-grid">
+              <label>Known distance cm<input id="knownDistance" type="number" min="0.01" step="0.1" value="100" /></label>
+              <label>Carpet length cm<input id="carpetLength" type="number" min="0" step="0.1" /></label>
+              <label>Carpet width cm<input id="carpetWidth" type="number" min="0" step="0.1" /></label>
+              <label class="wide">Scale note<input id="scaleNote" type="text" placeholder="two visible carpet points, start line, etc." /></label>
+            </div>
+            <div id="calibrationStatus" class="calibration-status">Not calibrated</div>
+          </section>
+
+          <section class="panel-section">
+            <h2>Point Defaults</h2>
+            <div class="form-grid">
+              <label>Landmark
+                <select id="landmarkType">
+                  <option value="heel contact">heel contact</option>
+                  <option value="toe contact">toe contact</option>
+                  <option value="sole contact">sole contact</option>
+                </select>
+              </label>
+              <label>Confidence
+                <select id="confidence">
+                  <option>high</option>
+                  <option>medium</option>
+                  <option>low</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-title-row">
+              <h2>Footsteps</h2>
+              <span id="pointCount" class="count-pill">0</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Foot</th>
+                    <th>Frame</th>
+                    <th>X</th>
+                    <th>Y</th>
+                    <th>Step</th>
+                    <th>Stride</th>
+                  </tr>
+                </thead>
+                <tbody id="pointsTable"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel-section selected-editor">
+            <h2>Selected Point</h2>
+            <div id="selectedEmpty" class="muted">No point selected.</div>
+            <div id="selectedForm" class="form-grid" hidden>
+              <label>Foot
+                <select id="selectedFoot">
+                  <option value="left">left</option>
+                  <option value="right">right</option>
+                </select>
+              </label>
+              <label>Landmark
+                <select id="selectedLandmark">
+                  <option value="heel contact">heel contact</option>
+                  <option value="toe contact">toe contact</option>
+                  <option value="sole contact">sole contact</option>
+                </select>
+              </label>
+              <label>Confidence
+                <select id="selectedConfidence">
+                  <option>high</option>
+                  <option>medium</option>
+                  <option>low</option>
+                </select>
+              </label>
+              <label class="wide">Point note<input id="selectedNote" type="text" /></label>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <h2>Quality Checks</h2>
+            <ul id="qualityList" class="quality-list"></ul>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
