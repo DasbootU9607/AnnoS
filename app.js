@@ -34,6 +34,7 @@ const els = {
   carpetWidth: $("carpetWidth"),
   scaleNote: $("scaleNote"),
   calibrationStatus: $("calibrationStatus"),
+  directionStatus: $("directionStatus"),
   landmarkType: $("landmarkType"),
   confidence: $("confidence"),
   selectedEmpty: $("selectedEmpty"),
@@ -76,6 +77,7 @@ const state = {
   },
   calibration: {
     points: [],
+    directionPoints: [],
     knownDistanceCm: 100,
     cmPerPixel: null,
     note: ""
@@ -106,6 +108,12 @@ function metadata() {
     carpet_width_cm: numberOrBlank(els.carpetWidth.value),
     scale_note: els.scaleNote.value.trim()
   };
+}
+
+function calibrationMethod() {
+  return state.calibration.directionPoints.length === 2
+    ? "two-point distance calibration + walking-direction projection"
+    : "two-point distance calibration; calibration line used as walking direction";
 }
 
 function numberOrBlank(value) {
@@ -145,7 +153,7 @@ function snapshot() {
 
 function restoreSnapshot(raw) {
   const data = JSON.parse(raw);
-  state.calibration = data.calibration;
+  state.calibration = normalizeCalibration(data.calibration);
   state.points = data.points;
   state.selectedPointId = data.selectedPointId;
   recalcRealCoordinates();
@@ -353,7 +361,29 @@ function setCalibrationPoint(event) {
   setDirty();
 }
 
+function setDirectionPoint(event) {
+  if (!state.videoMeta.width) return;
+  pauseForAnnotation();
+  pushHistory();
+  const vp = videoPointFromEvent(event);
+  const point = {
+    x: round(vp.x, 3),
+    y: round(vp.y, 3),
+    frame_index: currentFrame(),
+    timestamp_s: round(els.video.currentTime || 0, 3)
+  };
+  if (state.calibration.directionPoints.length >= 2) {
+    state.calibration.directionPoints = [point];
+  } else {
+    state.calibration.directionPoints.push(point);
+  }
+  recalcRealCoordinates();
+  renderAll();
+  setDirty();
+}
+
 function updateCalibrationScale() {
+  state.calibration = normalizeCalibration(state.calibration);
   state.calibration.knownDistanceCm = Number(els.knownDistance.value) || 0;
   state.calibration.note = els.scaleNote.value.trim();
   if (state.calibration.points.length < 2 || state.calibration.knownDistanceCm <= 0) {
@@ -365,25 +395,55 @@ function updateCalibrationScale() {
   state.calibration.cmPerPixel = pixelDistance > 0 ? state.calibration.knownDistanceCm / pixelDistance : null;
 }
 
-function pixelToReal(pixelX, pixelY) {
+function normalizeCalibration(calibration = {}) {
+  return {
+    points: Array.isArray(calibration.points) ? calibration.points : [],
+    directionPoints: Array.isArray(calibration.directionPoints) ? calibration.directionPoints : [],
+    knownDistanceCm: calibration.knownDistanceCm ?? calibration.known_distance_cm ?? 100,
+    cmPerPixel: calibration.cmPerPixel ?? null,
+    note: calibration.note || ""
+  };
+}
+
+function directionPoints() {
   const c = state.calibration;
-  if (!c.cmPerPixel || c.points.length < 2) {
-    return { real_x_cm: "", real_y_cm: "" };
-  }
-  const [a, b] = c.points;
+  if (c.directionPoints.length === 2) return c.directionPoints;
+  if (c.points.length === 2) return c.points;
+  return null;
+}
+
+function projectionBasis() {
+  const c = state.calibration;
+  const axis = directionPoints();
+  if (!c.cmPerPixel || c.points.length < 2 || !axis) return null;
+  const [origin] = c.points;
+  const [a, b] = axis;
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const length = Math.hypot(dx, dy);
-  if (!length) return { real_x_cm: "", real_y_cm: "" };
+  if (!length) return null;
   const ux = dx / length;
   const uy = dy / length;
-  const vx = -uy;
-  const vy = ux;
-  const rx = pixelX - a.x;
-  const ry = pixelY - a.y;
   return {
-    real_x_cm: round((rx * ux + ry * uy) * c.cmPerPixel, 3),
-    real_y_cm: round((rx * vx + ry * vy) * c.cmPerPixel, 3)
+    origin,
+    ux,
+    uy,
+    vx: -uy,
+    vy: ux
+  };
+}
+
+function pixelToReal(pixelX, pixelY) {
+  const c = state.calibration;
+  const basis = projectionBasis();
+  if (!basis) {
+    return { real_x_cm: "", real_y_cm: "" };
+  }
+  const rx = pixelX - basis.origin.x;
+  const ry = pixelY - basis.origin.y;
+  return {
+    real_x_cm: round((rx * basis.ux + ry * basis.uy) * c.cmPerPixel, 3),
+    real_y_cm: round((rx * basis.vx + ry * basis.vy) * c.cmPerPixel, 3)
   };
 }
 
@@ -513,7 +573,7 @@ function calculations() {
       gait_speed_cm_s: duration > 0 ? round(distance / duration, 3) : "",
       annotation_quality: els.usabilityGrade.value,
       truth_source: "Manual video annotation",
-      calibration_method: "two-point distance calibration",
+      calibration_method: calibrationMethod(),
       note: els.videoNote.value.trim()
     }
   };
@@ -524,6 +584,9 @@ function qualityChecks(calc = calculations()) {
   if (!state.videoMeta.fileName) checks.push(["warn", "No video is loaded."]);
   if (!state.calibration.cmPerPixel) checks.push(["error", "Calibration is missing. Add two calibration points and a known distance."]);
   else checks.push(["ok", `Calibration ready: ${formatNumber(state.calibration.cmPerPixel, 4)} cm per pixel.`]);
+  if (state.calibration.cmPerPixel && state.calibration.directionPoints.length < 2) {
+    checks.push(["warn", "Walking direction is not set. Step length is using the calibration line as the forward axis."]);
+  }
   if (state.points.length < 6) checks.push(["warn", "Fewer than 6 footstep points. MVP acceptance requires at least 6 consecutive points."]);
   else checks.push(["ok", `${state.points.length} footstep points annotated.`]);
 
@@ -556,6 +619,7 @@ function qualityChecks(calc = calculations()) {
 }
 
 function renderAll() {
+  state.calibration = normalizeCalibration(state.calibration);
   renumberPoints();
   updateCalibrationScale();
   renderCalibrationStatus();
@@ -577,6 +641,16 @@ function renderCalibrationStatus() {
     els.calibrationStatus.textContent = "Calibration point 1 set. Click point 2.";
   } else {
     els.calibrationStatus.textContent = "Not calibrated";
+  }
+
+  if (c.directionPoints.length === 2) {
+    els.directionStatus.textContent = "Walking direction set. X = forward projection, Y = perpendicular width.";
+  } else if (c.directionPoints.length === 1) {
+    els.directionStatus.textContent = "Direction point 1 set. Click point 2 along the walking direction.";
+  } else if (c.points.length === 2) {
+    els.directionStatus.textContent = "Walking direction not set. Using calibration line as X axis.";
+  } else {
+    els.directionStatus.textContent = "Walking direction not set";
   }
 }
 
@@ -646,6 +720,7 @@ function draw() {
   ctx.lineJoin = "round";
 
   drawCalibration(ctx);
+  drawDirection(ctx);
   drawAxes(ctx);
   drawFootsteps(ctx);
   if (state.mode === "measure") drawMeasurements(ctx);
@@ -670,17 +745,34 @@ function drawCalibration(ctx) {
   }
 }
 
+function drawDirection(ctx) {
+  const pts = state.calibration.directionPoints.map(calibrationPointToCanvas);
+  if (!pts.length) return;
+  ctx.strokeStyle = "#8a5bb8";
+  ctx.fillStyle = "#8a5bb8";
+  ctx.lineWidth = 2;
+  if (pts.length === 2) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    ctx.lineTo(pts[1].x, pts[1].y);
+    ctx.stroke();
+  }
+  pts.forEach((p, index) => {
+    circle(ctx, p.x, p.y, 6, "#8a5bb8", "#ffffff", 2);
+    label(ctx, `D${index + 1}`, p.x + 9, p.y - 9, "#6d4097");
+  });
+}
+
 function drawAxes(ctx) {
-  if (!state.calibration.cmPerPixel || state.calibration.points.length < 2) return;
-  const [a, b] = state.calibration.points;
-  const origin = calibrationPointToCanvas(a);
-  const end = calibrationPointToCanvas(b);
-  const dx = end.x - origin.x;
-  const dy = end.y - origin.y;
+  const basis = projectionBasis();
+  if (!basis) return;
+  const origin = calibrationPointToCanvas(basis.origin);
+  const dx = basis.ux;
+  const dy = basis.uy;
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len;
   const uy = dy / len;
-  const axisLength = Math.min(130, len);
+  const axisLength = 130;
   ctx.strokeStyle = "rgba(77, 143, 217, 0.9)";
   ctx.lineWidth = 2;
   arrow(ctx, origin.x, origin.y, origin.x + ux * axisLength, origin.y + uy * axisLength);
@@ -715,6 +807,7 @@ function drawFootsteps(ctx) {
 
 function drawMeasurements(ctx) {
   const rows = calculations().rows;
+  const basis = projectionBasis();
   ctx.font = "12px Segoe UI, Arial, sans-serif";
   rows.forEach((point, index) => {
     if (index === 0 || !isNumber(point.step_length_cm)) return;
@@ -722,9 +815,30 @@ function drawMeasurements(ctx) {
     if (previous.foot_side === point.foot_side) return;
     const a = videoToCanvas(previous);
     const b = videoToCanvas(point);
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    label(ctx, `${formatNumber(point.step_length_cm, 1)} cm`, mx + 4, my + 4, "#405468");
+    if (basis) {
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const projected = {
+        x: a.x + (dx * basis.ux + dy * basis.uy) * basis.ux,
+        y: a.y + (dx * basis.ux + dy * basis.uy) * basis.uy
+      };
+      ctx.strokeStyle = "rgba(47, 102, 177, 0.82)";
+      ctx.lineWidth = 2;
+      arrow(ctx, a.x, a.y, projected.x, projected.y);
+      ctx.strokeStyle = "rgba(199, 123, 45, 0.72)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(projected.x, projected.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label(ctx, `${formatNumber(point.step_length_cm, 1)} cm`, (a.x + projected.x) / 2 + 4, (a.y + projected.y) / 2 + 4, "#405468");
+    } else {
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      label(ctx, `${formatNumber(point.step_length_cm, 1)} cm`, mx + 4, my + 4, "#405468");
+    }
   });
 }
 
@@ -766,7 +880,7 @@ function arrow(ctx, x1, y1, x2, y2) {
 function exportProjectJson() {
   const data = {
     app: "AnnoS",
-    version: "1.0.0",
+    version: "1.1.0",
     saved_at: new Date().toISOString(),
     metadata: metadata(),
     video_meta: state.videoMeta,
@@ -786,7 +900,7 @@ function importProjectJson(file) {
       const data = JSON.parse(String(reader.result));
       applyMetadata(data.metadata || {});
       state.videoMeta = { ...state.videoMeta, ...(data.video_meta || {}) };
-      state.calibration = data.calibration || state.calibration;
+      state.calibration = normalizeCalibration(data.calibration || state.calibration);
       els.knownDistance.value = state.calibration.knownDistanceCm || 100;
       if (!els.scaleNote.value && state.calibration.note) els.scaleNote.value = state.calibration.note;
       state.points = data.points || [];
@@ -832,7 +946,7 @@ function exportCsvs() {
     camera_status: md.camera_status,
     carpet_length_cm: md.carpet_length_cm,
     carpet_width_cm: md.carpet_width_cm,
-    calibration_method: "two-point distance calibration",
+    calibration_method: calibrationMethod(),
     scale_note: md.scale_note,
     usability_grade: md.usability_grade,
     reviewer: md.reviewer,
@@ -840,7 +954,7 @@ function exportCsvs() {
     note: md.note
   };
 
-  const annotationRows = sortedPoints().map((p) => ({
+  const annotationRows = calc.rows.map((p) => ({
     video_id: md.video_id,
     step_index: p.step_index,
     foot_side: p.foot_side,
@@ -851,6 +965,10 @@ function exportCsvs() {
     pixel_y: p.pixel_y,
     real_x_cm: p.real_x_cm,
     real_y_cm: p.real_y_cm,
+    step_length_cm: p.step_length_cm,
+    stride_length_cm: p.stride_length_cm,
+    step_width_cm: p.step_width_cm,
+    step_time_s: p.step_time_s,
     confidence: p.confidence,
     note: p.note || ""
   }));
@@ -1012,6 +1130,10 @@ els.canvas.addEventListener("pointerdown", (event) => {
   }
   if (state.mode === "calibration") {
     setCalibrationPoint(event);
+    return;
+  }
+  if (state.mode === "direction") {
+    setDirectionPoint(event);
     return;
   }
   if (state.mode === "left" || state.mode === "right") {
