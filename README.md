@@ -9,6 +9,7 @@ The application runs entirely in the browser. Video files and annotation data st
 - Load local walking videos without upload or server setup.
 - Review video with timeline seeking, playback speed control, and frame-step navigation.
 - Calibrate pixel distance to real-world centimeters using a two-point reference.
+- Set a separate walking-direction axis for projected step length and stride length.
 - Annotate left and right foot contact points on the video frame.
 - Edit annotations by selecting, dragging, deleting, undoing, redoing, and updating point metadata.
 - Calculate step length, stride length, step width, step time, and gait speed.
@@ -27,9 +28,10 @@ No installation, build step, or backend service is required.
 1. Load a local walking video.
 2. Fill in video metadata such as video ID, subject ID, reviewer, camera angle, and FPS.
 3. Use **Calibrate** mode to select two reference points and enter their known distance.
-4. Use **Left** and **Right** modes to mark foot contact points.
-5. Review computed metrics and quality checks.
-6. Save the project as JSON or export CSV files.
+4. Use **Direction** mode to click two points along the subject's walking direction.
+5. Use **Left** and **Right** modes to mark foot contact points.
+6. Review computed metrics and quality checks.
+7. Save the project as JSON or export CSV files.
 
 ## Exported Files
 
@@ -45,7 +47,9 @@ Project JSON files preserve the current annotation session and can be loaded bac
 
 - FPS is editable because browsers do not expose reliable FPS metadata for all local video files.
 - Frame index and frame-step controls use the configured FPS value.
-- Calibration defines the X axis from calibration point 1 to calibration point 2. The Y axis is perpendicular to that direction.
+- Calibration only defines scale in cm/px.
+- Direction defines the X axis used for forward projection. Step length and stride length are measured along this axis, and step width is measured on the perpendicular axis.
+- If direction is not set, older projects fall back to using calibration point 1 to calibration point 2 as the X axis.
 - The system is implemented as static HTML, CSS, and JavaScript.
 
 ## License
