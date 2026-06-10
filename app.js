@@ -34,6 +34,7 @@ const els = {
   carpetWidth: $("carpetWidth"),
   scaleNote: $("scaleNote"),
   calibrationStatus: $("calibrationStatus"),
+  groundStatus: $("groundStatus"),
   directionStatus: $("directionStatus"),
   landmarkType: $("landmarkType"),
   confidence: $("confidence"),
@@ -77,6 +78,7 @@ const state = {
   },
   calibration: {
     points: [],
+    groundPlanePoints: [],
     directionPoints: [],
     knownDistanceCm: 100,
     cmPerPixel: null,
@@ -111,7 +113,9 @@ function metadata() {
 }
 
 function calibrationMethod() {
-  return state.calibration.directionPoints.length === 2
+  return groundPlaneHomography()
+    ? "four-point ground-plane homography"
+    : state.calibration.directionPoints.length === 2
     ? "two-point distance calibration + walking-direction projection"
     : "two-point distance calibration; calibration line used as walking direction";
 }
@@ -382,6 +386,27 @@ function setDirectionPoint(event) {
   setDirty();
 }
 
+function setGroundPlanePoint(event) {
+  if (!state.videoMeta.width) return;
+  pauseForAnnotation();
+  pushHistory();
+  const vp = videoPointFromEvent(event);
+  const point = {
+    x: round(vp.x, 3),
+    y: round(vp.y, 3),
+    frame_index: currentFrame(),
+    timestamp_s: round(els.video.currentTime || 0, 3)
+  };
+  if (state.calibration.groundPlanePoints.length >= 4) {
+    state.calibration.groundPlanePoints = [point];
+  } else {
+    state.calibration.groundPlanePoints.push(point);
+  }
+  recalcRealCoordinates();
+  renderAll();
+  setDirty();
+}
+
 function updateCalibrationScale() {
   state.calibration = normalizeCalibration(state.calibration);
   state.calibration.knownDistanceCm = Number(els.knownDistance.value) || 0;
@@ -398,10 +423,99 @@ function updateCalibrationScale() {
 function normalizeCalibration(calibration = {}) {
   return {
     points: Array.isArray(calibration.points) ? calibration.points : [],
+    groundPlanePoints: Array.isArray(calibration.groundPlanePoints) ? calibration.groundPlanePoints : [],
     directionPoints: Array.isArray(calibration.directionPoints) ? calibration.directionPoints : [],
     knownDistanceCm: calibration.knownDistanceCm ?? calibration.known_distance_cm ?? 100,
     cmPerPixel: calibration.cmPerPixel ?? null,
     note: calibration.note || ""
+  };
+}
+
+function groundPlaneDimensions() {
+  const length = Number(els.carpetLength.value);
+  const width = Number(els.carpetWidth.value);
+  if (!Number.isFinite(length) || !Number.isFinite(width) || length <= 0 || width <= 0) return null;
+  return { length, width };
+}
+
+function groundPlaneHomography() {
+  const points = state.calibration.groundPlanePoints;
+  const dims = groundPlaneDimensions();
+  if (points.length !== 4 || !dims) return null;
+  const dst = [
+    { x: 0, y: 0 },
+    { x: dims.length, y: 0 },
+    { x: dims.length, y: dims.width },
+    { x: 0, y: dims.width }
+  ];
+  return computeHomography(points, dst);
+}
+
+function groundPlaneImageHomography() {
+  const points = state.calibration.groundPlanePoints;
+  const dims = groundPlaneDimensions();
+  if (points.length !== 4 || !dims) return null;
+  const src = [
+    { x: 0, y: 0 },
+    { x: dims.length, y: 0 },
+    { x: dims.length, y: dims.width },
+    { x: 0, y: dims.width }
+  ];
+  return computeHomography(src, points);
+}
+
+function computeHomography(src, dst) {
+  const matrix = [];
+  const values = [];
+  src.forEach((point, index) => {
+    const x = point.x;
+    const y = point.y;
+    const X = dst[index].x;
+    const Y = dst[index].y;
+    matrix.push([x, y, 1, 0, 0, 0, -X * x, -X * y]);
+    values.push(X);
+    matrix.push([0, 0, 0, x, y, 1, -Y * x, -Y * y]);
+    values.push(Y);
+  });
+  const h = solveLinearSystem(matrix, values);
+  return h ? [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1] : null;
+}
+
+function solveLinearSystem(matrix, values) {
+  const n = values.length;
+  const a = matrix.map((row, index) => [...row, values[index]]);
+  for (let col = 0; col < n; col += 1) {
+    let pivotRow = col;
+    for (let row = col + 1; row < n; row += 1) {
+      if (Math.abs(a[row][col]) > Math.abs(a[pivotRow][col])) pivotRow = row;
+    }
+    if (Math.abs(a[pivotRow][col]) < 1e-9) return null;
+    [a[col], a[pivotRow]] = [a[pivotRow], a[col]];
+    const pivot = a[col][col];
+    for (let j = col; j <= n; j += 1) a[col][j] /= pivot;
+    for (let row = 0; row < n; row += 1) {
+      if (row === col) continue;
+      const factor = a[row][col];
+      for (let j = col; j <= n; j += 1) a[row][j] -= factor * a[col][j];
+    }
+  }
+  return a.map((row) => row[n]);
+}
+
+function applyHomography(h, x, y) {
+  const point = transformPoint(h, x, y);
+  return point ? {
+    real_x_cm: round(point.x, 3),
+    real_y_cm: round(point.y, 3)
+  } : null;
+}
+
+function transformPoint(h, x, y) {
+  const denominator = h[6] * x + h[7] * y + h[8];
+  if (Math.abs(denominator) < 1e-9) return null;
+  return {
+    x: (h[0] * x + h[1] * y + h[2]) / denominator,
+    y: (h[3] * x + h[4] * y + h[5]) / denominator
   };
 }
 
@@ -434,6 +548,11 @@ function projectionBasis() {
 }
 
 function pixelToReal(pixelX, pixelY) {
+  const groundPlane = groundPlaneHomography();
+  if (groundPlane) {
+    const real = applyHomography(groundPlane, pixelX, pixelY);
+    if (real) return real;
+  }
   const c = state.calibration;
   const basis = projectionBasis();
   if (!basis) {
@@ -581,10 +700,15 @@ function calculations() {
 
 function qualityChecks(calc = calculations()) {
   const checks = [];
+  const hasGroundPlane = Boolean(groundPlaneHomography());
   if (!state.videoMeta.fileName) checks.push(["warn", "No video is loaded."]);
-  if (!state.calibration.cmPerPixel) checks.push(["error", "Calibration is missing. Add two calibration points and a known distance."]);
+  if (hasGroundPlane) checks.push(["ok", "Ground plane ready: using physical X/Y coordinates."]);
+  else if (!state.calibration.cmPerPixel) checks.push(["error", "Calibration is missing. Add a ground plane or two calibration points and a known distance."]);
   else checks.push(["ok", `Calibration ready: ${formatNumber(state.calibration.cmPerPixel, 4)} cm per pixel.`]);
-  if (state.calibration.cmPerPixel && state.calibration.directionPoints.length < 2) {
+  if (state.calibration.groundPlanePoints.length > 0 && !groundPlaneHomography()) {
+    checks.push(["warn", "Ground plane is incomplete. Click four ground points and enter carpet length and width."]);
+  }
+  if (!hasGroundPlane && state.calibration.cmPerPixel && state.calibration.directionPoints.length < 2) {
     checks.push(["warn", "Walking direction is not set. Step length is using the calibration line as the forward axis."]);
   }
   if (state.points.length < 6) checks.push(["warn", "Fewer than 6 footstep points. MVP acceptance requires at least 6 consecutive points."]);
@@ -641,6 +765,16 @@ function renderCalibrationStatus() {
     els.calibrationStatus.textContent = "Calibration point 1 set. Click point 2.";
   } else {
     els.calibrationStatus.textContent = "Not calibrated";
+  }
+
+  const groundDims = groundPlaneDimensions();
+  if (groundPlaneHomography()) {
+    els.groundStatus.textContent = "Ground plane set. Foot points convert directly to physical X/Y coordinates.";
+  } else if (c.groundPlanePoints.length > 0) {
+    const missingSize = groundDims ? "" : " Enter carpet length and width.";
+    els.groundStatus.textContent = `Ground point ${c.groundPlanePoints.length}/4 set.${missingSize}`;
+  } else {
+    els.groundStatus.textContent = "Ground plane not set";
   }
 
   if (c.directionPoints.length === 2) {
@@ -720,6 +854,7 @@ function draw() {
   ctx.lineJoin = "round";
 
   drawCalibration(ctx);
+  drawGroundPlane(ctx);
   drawDirection(ctx);
   drawAxes(ctx);
   drawFootsteps(ctx);
@@ -760,6 +895,27 @@ function drawDirection(ctx) {
   pts.forEach((p, index) => {
     circle(ctx, p.x, p.y, 6, "#8a5bb8", "#ffffff", 2);
     label(ctx, `D${index + 1}`, p.x + 9, p.y - 9, "#6d4097");
+  });
+}
+
+function drawGroundPlane(ctx) {
+  const pts = state.calibration.groundPlanePoints.map(calibrationPointToCanvas);
+  if (!pts.length) return;
+  ctx.strokeStyle = "#397f82";
+  ctx.fillStyle = "#397f82";
+  ctx.lineWidth = 2;
+  if (pts.length > 1) {
+    ctx.beginPath();
+    pts.forEach((p, index) => {
+      if (index === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    if (pts.length === 4) ctx.closePath();
+    ctx.stroke();
+  }
+  pts.forEach((p, index) => {
+    circle(ctx, p.x, p.y, 6, "#397f82", "#ffffff", 2);
+    label(ctx, `G${index + 1}`, p.x + 9, p.y - 9, "#2c6b6e");
   });
 }
 
@@ -808,6 +964,7 @@ function drawFootsteps(ctx) {
 function drawMeasurements(ctx) {
   const rows = calculations().rows;
   const basis = projectionBasis();
+  const groundToImage = groundPlaneImageHomography();
   ctx.font = "12px Segoe UI, Arial, sans-serif";
   rows.forEach((point, index) => {
     if (index === 0 || !isNumber(point.step_length_cm)) return;
@@ -815,7 +972,23 @@ function drawMeasurements(ctx) {
     if (previous.foot_side === point.foot_side) return;
     const a = videoToCanvas(previous);
     const b = videoToCanvas(point);
-    if (basis) {
+    if (groundToImage && isReal(point) && isReal(previous)) {
+      const projectedImage = transformPoint(groundToImage, point.real_x_cm, previous.real_y_cm);
+      if (!projectedImage) return;
+      const projected = calibrationPointToCanvas(projectedImage);
+      ctx.strokeStyle = "rgba(47, 102, 177, 0.82)";
+      ctx.lineWidth = 2;
+      arrow(ctx, a.x, a.y, projected.x, projected.y);
+      ctx.strokeStyle = "rgba(199, 123, 45, 0.72)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(projected.x, projected.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      label(ctx, `${formatNumber(point.step_length_cm, 1)} cm`, (a.x + projected.x) / 2 + 4, (a.y + projected.y) / 2 + 4, "#405468");
+    } else if (basis) {
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const projected = {
@@ -880,7 +1053,7 @@ function arrow(ctx, x1, y1, x2, y2) {
 function exportProjectJson() {
   const data = {
     app: "AnnoS",
-    version: "1.1.0",
+    version: "1.2.0",
     saved_at: new Date().toISOString(),
     metadata: metadata(),
     video_meta: state.videoMeta,
@@ -1112,6 +1285,7 @@ els.fpsInput.addEventListener("input", () => {
 ].forEach((el) => el.addEventListener("input", () => {
   els.currentVideoLabel.textContent = els.videoId.value.trim() || state.videoMeta.fileName || "No video loaded";
   renumberPoints();
+  recalcRealCoordinates();
   renderAll();
   setDirty();
 }));
@@ -1130,6 +1304,10 @@ els.canvas.addEventListener("pointerdown", (event) => {
   }
   if (state.mode === "calibration") {
     setCalibrationPoint(event);
+    return;
+  }
+  if (state.mode === "ground") {
+    setGroundPlanePoint(event);
     return;
   }
   if (state.mode === "direction") {
