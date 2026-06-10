@@ -562,6 +562,12 @@ textarea:focus {
   color: #337047;
 }
 
+.secondary-status {
+  border-color: #e4d9ec;
+  background: #faf7fc;
+  color: #6d4097;
+}
+
 .muted {
   color: var(--muted);
 }
