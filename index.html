@@ -23,6 +23,7 @@
         <div class="topbar-actions">
           <button id="loadProjectBtn" class="ghost-btn">Load JSON</button>
           <button id="saveProjectBtn" class="ghost-btn">Save JSON</button>
+          <button id="clearAllBtn" class="danger-btn">Clear All</button>
           <button id="exportAllBtn" class="primary-btn">Export CSVs</button>
           <input id="projectInput" type="file" accept="application/json,.json" hidden />
         </div>
@@ -169,6 +170,7 @@
             <div class="form-grid">
               <label>Landmark
                 <select id="landmarkType">
+                  <option value="ankle projection">ankle projection</option>
                   <option value="heel contact">heel contact</option>
                   <option value="toe contact">toe contact</option>
                   <option value="sole contact">sole contact</option>
@@ -219,6 +221,7 @@
               </label>
               <label>Landmark
                 <select id="selectedLandmark">
+                  <option value="ankle projection">ankle projection</option>
                   <option value="heel contact">heel contact</option>
                   <option value="toe contact">toe contact</option>
                   <option value="sole contact">sole contact</option>
