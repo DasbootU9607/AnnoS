@@ -5,6 +5,7 @@ const els = {
   projectInput: $("projectInput"),
   loadProjectBtn: $("loadProjectBtn"),
   saveProjectBtn: $("saveProjectBtn"),
+  clearAllBtn: $("clearAllBtn"),
   exportAllBtn: $("exportAllBtn"),
   leftSidebarToggle: $("leftSidebarToggle"),
   rightSidebarToggle: $("rightSidebarToggle"),
@@ -629,6 +630,34 @@ function deleteSelectedPoint() {
   state.points = state.points.filter((point) => point.id !== state.selectedPointId);
   state.selectedPointId = null;
   renumberPoints();
+  renderAll();
+  setDirty();
+}
+
+function clearAllAnnotations() {
+  const hasAnnotationData = state.points.length
+    || state.calibration.points.length
+    || state.calibration.groundPlanePoints.length
+    || state.calibration.directionPoints.length;
+  if (!hasAnnotationData) return;
+  const confirmed = confirm(
+    "Clear all annotation points, calibration points, ground points, and direction points?\n\n" +
+    "The loaded video and metadata will be kept. You can restore this action with Undo."
+  );
+  if (!confirmed) return;
+
+  pushHistory();
+  state.calibration = normalizeCalibration({
+    ...state.calibration,
+    points: [],
+    groundPlanePoints: [],
+    directionPoints: [],
+    cmPerPixel: null
+  });
+  state.points = [];
+  state.selectedPointId = null;
+  state.draggingPointId = null;
+  state.hoverPointId = null;
   renderAll();
   setDirty();
 }
@@ -1386,6 +1415,7 @@ els.rightSidebarToggle.addEventListener("click", () => toggleSidebar("right"));
 els.undoBtn.addEventListener("click", undo);
 els.redoBtn.addEventListener("click", redo);
 els.deletePointBtn.addEventListener("click", deleteSelectedPoint);
+els.clearAllBtn.addEventListener("click", clearAllAnnotations);
 els.saveProjectBtn.addEventListener("click", exportProjectJson);
 els.exportAllBtn.addEventListener("click", exportCsvs);
 els.loadProjectBtn.addEventListener("click", () => els.projectInput.click());
