@@ -11,8 +11,9 @@ The application runs entirely in the browser. Video files and annotation data st
 - Calibrate pixel distance to real-world centimeters using a two-point reference.
 - Convert foot points to physical ground-plane coordinates using a four-point carpet/ground rectangle.
 - Set a separate walking-direction axis for projected step length and stride length.
-- Annotate left and right foot contact points on the video frame.
+- Annotate left and right foot contact points on the video frame, including ankle ground-projection points for PosePro-style ankle-based validation.
 - Edit annotations by selecting, dragging, deleting, undoing, redoing, and updating point metadata.
+- Clear all annotation, calibration, ground-plane, and direction points with a confirmation prompt.
 - Calculate step length, stride length, step width, step time, and gait speed.
 - Run built-in quality checks for calibration, point count, confidence, and metric ranges.
 - Save and reload annotation sessions as JSON.
@@ -31,9 +32,10 @@ No installation, build step, or backend service is required.
 3. Use **Calibrate** mode to select two reference points and enter their known distance.
 4. For perspective videos, enter carpet length and width, then use **Ground** mode to click four ground-plane rectangle corners in order: G1 `(0,0)`, G2 `(length,0)`, G3 `(length,width)`, G4 `(0,width)`. G1 to G2 should follow the walking direction.
 5. If a full ground plane is not available, use **Direction** mode to click two points along the subject's walking direction.
-6. Use **Left** and **Right** modes to mark foot contact points.
-7. Review computed metrics and quality checks.
-8. Save the project as JSON or export CSV files.
+6. Choose the intended landmark type. For PosePro validation, use `ankle projection` and mark the ground point vertically below the visible ankle; if the ankle is unclear, approximate the rear-third sole contact area consistently.
+7. Use **Left** and **Right** modes to mark foot contact points.
+8. Review computed metrics and quality checks.
+9. Save the project as JSON or export CSV files.
 
 ## Exported Files
 
