@@ -41,6 +41,11 @@ const els = {
   confidence: $("confidence"),
   selectedEmpty: $("selectedEmpty"),
   selectedForm: $("selectedForm"),
+  selectedStepIndex: $("selectedStepIndex"),
+  selectedOrderMode: $("selectedOrderMode"),
+  applyStepOrderBtn: $("applyStepOrderBtn"),
+  moveStepUpBtn: $("moveStepUpBtn"),
+  moveStepDownBtn: $("moveStepDownBtn"),
   selectedFoot: $("selectedFoot"),
   selectedLandmark: $("selectedLandmark"),
   selectedConfidence: $("selectedConfidence"),
@@ -61,6 +66,8 @@ const els = {
   autoSwitch: $("autoSwitch"),
   undoBtn: $("undoBtn"),
   redoBtn: $("redoBtn"),
+  insertBeforeBtn: $("insertBeforeBtn"),
+  insertAfterBtn: $("insertAfterBtn"),
   deletePointBtn: $("deletePointBtn"),
   resetViewBtn: $("resetViewBtn")
 };
@@ -86,6 +93,7 @@ const state = {
     note: ""
   },
   points: [],
+  orderingMode: "time",
   selectedPointId: null,
   draggingPointId: null,
   hoverPointId: null,
@@ -152,6 +160,7 @@ function snapshot() {
   return JSON.stringify({
     calibration: state.calibration,
     points: state.points,
+    orderingMode: state.orderingMode,
     selectedPointId: state.selectedPointId
   });
 }
@@ -160,6 +169,7 @@ function restoreSnapshot(raw) {
   const data = JSON.parse(raw);
   state.calibration = normalizeCalibration(data.calibration);
   state.points = data.points;
+  state.orderingMode = data.orderingMode || "time";
   state.selectedPointId = data.selectedPointId;
   recalcRealCoordinates();
   renderAll();
@@ -175,6 +185,17 @@ function pushHistory() {
 function updateUndoRedo() {
   els.undoBtn.disabled = state.history.length === 0;
   els.redoBtn.disabled = state.redo.length === 0;
+}
+
+function updatePointActionButtons() {
+  const point = selectedPoint();
+  const hasPoint = Boolean(point);
+  els.insertBeforeBtn.disabled = !hasPoint;
+  els.insertAfterBtn.disabled = !hasPoint;
+  els.deletePointBtn.disabled = !hasPoint;
+  if (!hasPoint) return;
+  els.moveStepUpBtn.disabled = point.step_index <= 1;
+  els.moveStepDownBtn.disabled = point.step_index >= state.points.length;
 }
 
 function undo() {
@@ -597,24 +618,144 @@ function addFootstep(side, event) {
   };
   state.points.push(point);
   state.selectedPointId = point.id;
-  renumberPoints();
+  renumberPoints(state.orderingMode);
   if (els.autoSwitch.checked) setMode(side === "left" ? "right" : "left");
   renderAll();
   setDirty();
 }
 
-function renumberPoints() {
-  sortedPoints().forEach((point, index) => {
+function renumberPoints(mode = state.orderingMode) {
+  orderedPoints(mode).forEach((point, index) => {
     point.step_index = index + 1;
     point.video_id = els.videoId.value.trim();
   });
 }
 
 function sortedPoints() {
+  return orderedPoints(state.orderingMode);
+}
+
+function orderedPoints(mode = "time") {
+  if (mode === "manual") {
+    return [...state.points].sort((a, b) => {
+      if (a.step_index !== b.step_index) return normalizedStepIndex(a) - normalizedStepIndex(b);
+      if (a.timestamp_s !== b.timestamp_s) return a.timestamp_s - b.timestamp_s;
+      return String(a.id).localeCompare(String(b.id));
+    });
+  }
   return [...state.points].sort((a, b) => {
     if (a.timestamp_s !== b.timestamp_s) return a.timestamp_s - b.timestamp_s;
     return a.step_index - b.step_index;
   });
+}
+
+function normalizedStepIndex(point) {
+  const value = Number(point.step_index);
+  return Number.isFinite(value) && value > 0 ? value : Number.MAX_SAFE_INTEGER;
+}
+
+function selectedPoint() {
+  return state.points.find((p) => p.id === state.selectedPointId);
+}
+
+function clampStepIndex(value, max = state.points.length) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return null;
+  return clamp(n, 1, Math.max(1, max));
+}
+
+function setManualOrderFromList(points) {
+  state.orderingMode = "manual";
+  points.forEach((point, index) => {
+    point.step_index = index + 1;
+    point.video_id = els.videoId.value.trim();
+  });
+}
+
+function movePointToStep(pointId, targetIndex) {
+  const ordered = sortedPoints().filter((point) => point.id !== pointId);
+  const point = state.points.find((p) => p.id === pointId);
+  if (!point) return false;
+  const insertAt = clampStepIndex(targetIndex, state.points.length) - 1;
+  ordered.splice(insertAt, 0, point);
+  setManualOrderFromList(ordered);
+  return true;
+}
+
+function sortByEditedStep(pointId, targetIndex) {
+  const point = state.points.find((p) => p.id === pointId);
+  if (!point) return false;
+  point.step_index = clampStepIndex(targetIndex, state.points.length);
+  const ordered = [...state.points].sort((a, b) => {
+    if (a.step_index !== b.step_index) return normalizedStepIndex(a) - normalizedStepIndex(b);
+    if (a.id === pointId) return -1;
+    if (b.id === pointId) return 1;
+    if (a.timestamp_s !== b.timestamp_s) return a.timestamp_s - b.timestamp_s;
+    return String(a.id).localeCompare(String(b.id));
+  });
+  setManualOrderFromList(ordered);
+  return true;
+}
+
+function applyStepOrder() {
+  const point = selectedPoint();
+  if (!point) return;
+  const targetIndex = clampStepIndex(els.selectedStepIndex.value, state.points.length);
+  if (!targetIndex) {
+    els.selectedStepIndex.value = point.step_index;
+    return;
+  }
+  pushHistory();
+  const changed = els.selectedOrderMode.value === "sort"
+    ? sortByEditedStep(point.id, targetIndex)
+    : movePointToStep(point.id, targetIndex);
+  if (!changed) return;
+  renderAll();
+  setDirty();
+}
+
+function moveSelectedPoint(delta) {
+  const point = selectedPoint();
+  if (!point) return;
+  const targetIndex = clampStepIndex(point.step_index + delta, state.points.length);
+  if (!targetIndex || targetIndex === point.step_index) return;
+  pushHistory();
+  movePointToStep(point.id, targetIndex);
+  renderAll();
+  setDirty();
+}
+
+function inferInsertedFootSide(reference) {
+  if (state.mode === "left" || state.mode === "right") return state.mode;
+  return reference.foot_side === "left" ? "right" : "left";
+}
+
+function insertPointRelative(position) {
+  const reference = selectedPoint();
+  if (!reference) return;
+  pushHistory();
+  const currentTime = els.video.currentTime || reference.timestamp_s || 0;
+  const real = pixelToReal(reference.pixel_x, reference.pixel_y);
+  const point = {
+    id: globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}_${Math.random()}`,
+    video_id: els.videoId.value.trim(),
+    step_index: reference.step_index + (position === "after" ? 1 : 0),
+    foot_side: inferInsertedFootSide(reference),
+    landmark_type: els.landmarkType.value || reference.landmark_type,
+    frame_index: currentFrame(),
+    timestamp_s: round(currentTime, 3),
+    pixel_x: reference.pixel_x,
+    pixel_y: reference.pixel_y,
+    real_x_cm: real.real_x_cm,
+    real_y_cm: real.real_y_cm,
+    confidence: els.confidence.value || reference.confidence,
+    note: position === "after" ? "inserted after selected point" : "inserted before selected point"
+  };
+  state.points.push(point);
+  state.selectedPointId = point.id;
+  movePointToStep(point.id, point.step_index);
+  renderAll();
+  setDirty();
 }
 
 function selectPoint(id) {
@@ -622,6 +763,7 @@ function selectPoint(id) {
   renderSelectedEditor();
   renderTable();
   draw();
+  updatePointActionButtons();
 }
 
 function deleteSelectedPoint() {
@@ -783,6 +925,7 @@ function renderAll() {
   updateTimeReadout();
   draw();
   updateUndoRedo();
+  updatePointActionButtons();
 }
 
 function renderCalibrationStatus() {
@@ -818,10 +961,12 @@ function renderCalibrationStatus() {
 }
 
 function renderSelectedEditor() {
-  const point = state.points.find((p) => p.id === state.selectedPointId);
+  const point = selectedPoint();
   els.selectedEmpty.hidden = Boolean(point);
   els.selectedForm.hidden = !point;
   if (!point) return;
+  els.selectedStepIndex.max = String(Math.max(1, state.points.length));
+  els.selectedStepIndex.value = point.step_index;
   els.selectedFoot.value = point.foot_side;
   els.selectedLandmark.value = point.landmark_type;
   els.selectedConfidence.value = point.confidence;
@@ -1082,11 +1227,12 @@ function arrow(ctx, x1, y1, x2, y2) {
 function exportProjectJson() {
   const data = {
     app: "AnnoS",
-    version: "1.2.0",
+    version: "1.3.0",
     saved_at: new Date().toISOString(),
     metadata: metadata(),
     video_meta: state.videoMeta,
     calibration: state.calibration,
+    ordering_mode: state.orderingMode,
     points: state.points,
     calculations: calculations()
   };
@@ -1106,6 +1252,7 @@ function importProjectJson(file) {
       els.knownDistance.value = state.calibration.knownDistanceCm || 100;
       if (!els.scaleNote.value && state.calibration.note) els.scaleNote.value = state.calibration.note;
       state.points = data.points || [];
+      state.orderingMode = data.ordering_mode || data.orderingMode || "time";
       state.selectedPointId = null;
       recalcRealCoordinates();
       renderAll();
@@ -1323,6 +1470,13 @@ els.fpsInput.addEventListener("input", () => {
   el.addEventListener("input", updateSelectedPointFromForm);
 });
 
+els.selectedStepIndex.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    applyStepOrder();
+  }
+});
+
 els.canvas.addEventListener("pointerdown", (event) => {
   if (!state.videoMeta.width) return;
   els.canvas.setPointerCapture(event.pointerId);
@@ -1414,6 +1568,11 @@ els.leftSidebarToggle.addEventListener("click", () => toggleSidebar("left"));
 els.rightSidebarToggle.addEventListener("click", () => toggleSidebar("right"));
 els.undoBtn.addEventListener("click", undo);
 els.redoBtn.addEventListener("click", redo);
+els.applyStepOrderBtn.addEventListener("click", applyStepOrder);
+els.moveStepUpBtn.addEventListener("click", () => moveSelectedPoint(-1));
+els.moveStepDownBtn.addEventListener("click", () => moveSelectedPoint(1));
+els.insertBeforeBtn.addEventListener("click", () => insertPointRelative("before"));
+els.insertAfterBtn.addEventListener("click", () => insertPointRelative("after"));
 els.deletePointBtn.addEventListener("click", deleteSelectedPoint);
 els.clearAllBtn.addEventListener("click", clearAllAnnotations);
 els.saveProjectBtn.addEventListener("click", exportProjectJson);

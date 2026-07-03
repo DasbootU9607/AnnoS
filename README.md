@@ -12,7 +12,7 @@ The application runs entirely in the browser. Video files and annotation data st
 - Convert foot points to physical ground-plane coordinates using a four-point carpet/ground rectangle.
 - Set a separate walking-direction axis for projected step length and stride length.
 - Annotate left and right foot contact points on the video frame, including ankle ground-projection points for PosePro-style ankle-based validation.
-- Edit annotations by selecting, dragging, deleting, undoing, redoing, and updating point metadata.
+- Edit annotations by selecting, dragging, inserting before or after a selected point, deleting, undoing, redoing, changing step order, and updating point metadata.
 - Clear all annotation, calibration, ground-plane, and direction points with a confirmation prompt.
 - Calculate step length, stride length, step width, step time, and gait speed.
 - Run built-in quality checks for calibration, point count, confidence, and metric ranges.
@@ -34,8 +34,9 @@ No installation, build step, or backend service is required.
 5. If a full ground plane is not available, use **Direction** mode to click two points along the subject's walking direction.
 6. Choose the intended landmark type. For PosePro validation, use `ankle projection` and mark the ground point vertically below the visible ankle; if the ankle is unclear, approximate the rear-third sole contact area consistently.
 7. Use **Left** and **Right** modes to mark foot contact points.
-8. Review computed metrics and quality checks.
-9. Save the project as JSON or export CSV files.
+8. To repair a sequence, select a point and use **Insert Before**, **Insert After**, **Delete**, **Move Up**, **Move Down**, or edit **Step #**. **Auto shift sequence** moves the selected point to the target number and shifts the remaining points; **manual sort by #** sorts by the edited number and then normalizes the sequence.
+9. Review computed metrics and quality checks.
+10. Save the project as JSON or export CSV files.
 
 ## Exported Files
 

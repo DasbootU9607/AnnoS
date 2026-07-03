@@ -104,6 +104,8 @@
                 <label class="compact-check"><input id="autoSwitch" type="checkbox" checked /> Auto switch</label>
                 <button id="undoBtn" class="ghost-btn small">Undo</button>
                 <button id="redoBtn" class="ghost-btn small">Redo</button>
+                <button id="insertBeforeBtn" class="ghost-btn small">Insert Before</button>
+                <button id="insertAfterBtn" class="ghost-btn small">Insert After</button>
                 <button id="deletePointBtn" class="danger-btn small">Delete</button>
                 <button id="resetViewBtn" class="ghost-btn small">Reset view</button>
               </div>
@@ -213,6 +215,20 @@
             <h2>Selected Point</h2>
             <div id="selectedEmpty" class="muted">No point selected.</div>
             <div id="selectedForm" class="form-grid" hidden>
+              <label>Step #
+                <input id="selectedStepIndex" type="number" min="1" step="1" />
+              </label>
+              <label>Order edit
+                <select id="selectedOrderMode">
+                  <option value="shift">auto shift sequence</option>
+                  <option value="sort">manual sort by #</option>
+                </select>
+              </label>
+              <div class="wide order-actions">
+                <button id="applyStepOrderBtn" class="primary-btn small" type="button">Apply #</button>
+                <button id="moveStepUpBtn" class="ghost-btn small" type="button">Move Up</button>
+                <button id="moveStepDownBtn" class="ghost-btn small" type="button">Move Down</button>
+              </div>
               <label>Foot
                 <select id="selectedFoot">
                   <option value="left">left</option>
