@@ -39,8 +39,11 @@ const els = {
   directionStatus: $("directionStatus"),
   landmarkType: $("landmarkType"),
   confidence: $("confidence"),
+  segmentSelect: $("segmentSelect"),
+  newSegmentBtn: $("newSegmentBtn"),
   selectedEmpty: $("selectedEmpty"),
   selectedForm: $("selectedForm"),
+  selectedSegment: $("selectedSegment"),
   selectedStepIndex: $("selectedStepIndex"),
   selectedOrderMode: $("selectedOrderMode"),
   applyStepOrderBtn: $("applyStepOrderBtn"),
@@ -93,6 +96,10 @@ const state = {
     note: ""
   },
   points: [],
+  segments: [
+    { id: "segment_1", label: "Segment 1", directionPoints: [] }
+  ],
+  activeSegmentId: "segment_1",
   orderingMode: "time",
   selectedPointId: null,
   draggingPointId: null,
@@ -124,9 +131,66 @@ function metadata() {
 function calibrationMethod() {
   return groundPlaneHomography()
     ? "four-point ground-plane homography"
-    : state.calibration.directionPoints.length === 2
-    ? "two-point distance calibration + walking-direction projection"
+    : state.segments.some((segment) => segment.directionPoints.length === 2) || state.calibration.directionPoints.length === 2
+    ? "two-point distance calibration + segment walking-direction projection"
     : "two-point distance calibration; calibration line used as walking direction";
+}
+
+function normalizeSegments(segments = [], points = state.points) {
+  const source = Array.isArray(segments) && segments.length
+    ? segments
+    : [{ id: "segment_1", label: "Segment 1", directionPoints: state.calibration.directionPoints || [] }];
+  const normalized = source.map((segment, index) => ({
+    id: segment.id || `segment_${index + 1}`,
+    label: segment.label || segment.name || `Segment ${index + 1}`,
+    directionPoints: Array.isArray(segment.directionPoints) ? segment.directionPoints : []
+  }));
+  const validIds = new Set(normalized.map((segment) => segment.id));
+  points.forEach((point) => {
+    if (!validIds.has(point.segment_id)) point.segment_id = normalized[0].id;
+  });
+  return normalized;
+}
+
+function segmentById(id) {
+  return state.segments.find((segment) => segment.id === id) || state.segments[0];
+}
+
+function activeSegment() {
+  return segmentById(state.activeSegmentId);
+}
+
+function segmentIndex(id) {
+  const index = state.segments.findIndex((segment) => segment.id === id);
+  return index >= 0 ? index + 1 : 1;
+}
+
+function segmentLabel(id) {
+  const segment = segmentById(id);
+  return segment?.label || `Segment ${segmentIndex(id)}`;
+}
+
+function pointsInSegment(segmentId) {
+  return state.points.filter((point) => point.segment_id === segmentId);
+}
+
+function nextSegmentId() {
+  let n = state.segments.length + 1;
+  while (state.segments.some((segment) => segment.id === `segment_${n}`)) n += 1;
+  return `segment_${n}`;
+}
+
+function createSegment() {
+  pushHistory();
+  const id = nextSegmentId();
+  state.segments.push({
+    id,
+    label: `Segment ${state.segments.length + 1}`,
+    directionPoints: []
+  });
+  state.activeSegmentId = id;
+  renderAll();
+  setDirty();
 }
 
 function numberOrBlank(value) {
@@ -160,6 +224,8 @@ function snapshot() {
   return JSON.stringify({
     calibration: state.calibration,
     points: state.points,
+    segments: state.segments,
+    activeSegmentId: state.activeSegmentId,
     orderingMode: state.orderingMode,
     selectedPointId: state.selectedPointId
   });
@@ -169,6 +235,8 @@ function restoreSnapshot(raw) {
   const data = JSON.parse(raw);
   state.calibration = normalizeCalibration(data.calibration);
   state.points = data.points;
+  state.segments = normalizeSegments(data.segments, state.points);
+  state.activeSegmentId = data.activeSegmentId || state.segments[0].id;
   state.orderingMode = data.orderingMode || "time";
   state.selectedPointId = data.selectedPointId;
   recalcRealCoordinates();
@@ -195,7 +263,7 @@ function updatePointActionButtons() {
   els.deletePointBtn.disabled = !hasPoint;
   if (!hasPoint) return;
   els.moveStepUpBtn.disabled = point.step_index <= 1;
-  els.moveStepDownBtn.disabled = point.step_index >= state.points.length;
+  els.moveStepDownBtn.disabled = point.step_index >= pointsInSegment(point.segment_id).length;
 }
 
 function undo() {
@@ -391,6 +459,7 @@ function setDirectionPoint(event) {
   if (!state.videoMeta.width) return;
   pauseForAnnotation();
   pushHistory();
+  const segment = activeSegment();
   const vp = videoPointFromEvent(event);
   const point = {
     x: round(vp.x, 3),
@@ -398,10 +467,10 @@ function setDirectionPoint(event) {
     frame_index: currentFrame(),
     timestamp_s: round(els.video.currentTime || 0, 3)
   };
-  if (state.calibration.directionPoints.length >= 2) {
-    state.calibration.directionPoints = [point];
+  if (segment.directionPoints.length >= 2) {
+    segment.directionPoints = [point];
   } else {
-    state.calibration.directionPoints.push(point);
+    segment.directionPoints.push(point);
   }
   recalcRealCoordinates();
   renderAll();
@@ -541,16 +610,18 @@ function transformPoint(h, x, y) {
   };
 }
 
-function directionPoints() {
+function directionPoints(segmentId = state.activeSegmentId) {
   const c = state.calibration;
+  const segment = segmentById(segmentId);
+  if (segment?.directionPoints?.length === 2) return segment.directionPoints;
   if (c.directionPoints.length === 2) return c.directionPoints;
   if (c.points.length === 2) return c.points;
   return null;
 }
 
-function projectionBasis() {
+function projectionBasis(segmentId = state.activeSegmentId) {
   const c = state.calibration;
-  const axis = directionPoints();
+  const axis = directionPoints(segmentId);
   if (!c.cmPerPixel || c.points.length < 2 || !axis) return null;
   const [origin] = c.points;
   const [a, b] = axis;
@@ -569,14 +640,14 @@ function projectionBasis() {
   };
 }
 
-function pixelToReal(pixelX, pixelY) {
+function pixelToReal(pixelX, pixelY, segmentId = state.activeSegmentId) {
   const groundPlane = groundPlaneHomography();
   if (groundPlane) {
     const real = applyHomography(groundPlane, pixelX, pixelY);
     if (real) return real;
   }
   const c = state.calibration;
-  const basis = projectionBasis();
+  const basis = projectionBasis(segmentId);
   if (!basis) {
     return { real_x_cm: "", real_y_cm: "" };
   }
@@ -591,7 +662,7 @@ function pixelToReal(pixelX, pixelY) {
 function recalcRealCoordinates() {
   state.points = state.points.map((point) => ({
     ...point,
-    ...pixelToReal(point.pixel_x, point.pixel_y)
+    ...pixelToReal(point.pixel_x, point.pixel_y, point.segment_id)
   }));
 }
 
@@ -600,11 +671,13 @@ function addFootstep(side, event) {
   pauseForAnnotation();
   pushHistory();
   const vp = videoPointFromEvent(event);
-  const real = pixelToReal(vp.x, vp.y);
+  const segmentId = state.activeSegmentId;
+  const real = pixelToReal(vp.x, vp.y, segmentId);
   const point = {
     id: globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}_${Math.random()}`,
     video_id: els.videoId.value.trim(),
-    step_index: state.points.length + 1,
+    segment_id: segmentId,
+    step_index: pointsInSegment(segmentId).length + 1,
     foot_side: side,
     landmark_type: els.landmarkType.value,
     frame_index: currentFrame(),
@@ -625,9 +698,12 @@ function addFootstep(side, event) {
 }
 
 function renumberPoints(mode = state.orderingMode) {
-  orderedPoints(mode).forEach((point, index) => {
-    point.step_index = index + 1;
-    point.video_id = els.videoId.value.trim();
+  state.segments.forEach((segment) => {
+    orderedPoints(mode, segment.id).forEach((point, index) => {
+      point.segment_id = segment.id;
+      point.step_index = index + 1;
+      point.video_id = els.videoId.value.trim();
+    });
   });
 }
 
@@ -635,15 +711,24 @@ function sortedPoints() {
   return orderedPoints(state.orderingMode);
 }
 
-function orderedPoints(mode = "time") {
+function orderedPoints(mode = "time", segmentId = null) {
+  const points = segmentId ? pointsInSegment(segmentId) : [...state.points];
+  const bySegment = (a, b) => {
+    if (a.segment_id !== b.segment_id) return segmentIndex(a.segment_id) - segmentIndex(b.segment_id);
+    return 0;
+  };
   if (mode === "manual") {
-    return [...state.points].sort((a, b) => {
+    return [...points].sort((a, b) => {
+      const segmentOrder = bySegment(a, b);
+      if (segmentOrder) return segmentOrder;
       if (a.step_index !== b.step_index) return normalizedStepIndex(a) - normalizedStepIndex(b);
       if (a.timestamp_s !== b.timestamp_s) return a.timestamp_s - b.timestamp_s;
       return String(a.id).localeCompare(String(b.id));
     });
   }
-  return [...state.points].sort((a, b) => {
+  return [...points].sort((a, b) => {
+    const segmentOrder = bySegment(a, b);
+    if (segmentOrder) return segmentOrder;
     if (a.timestamp_s !== b.timestamp_s) return a.timestamp_s - b.timestamp_s;
     return a.step_index - b.step_index;
   });
@@ -658,7 +743,7 @@ function selectedPoint() {
   return state.points.find((p) => p.id === state.selectedPointId);
 }
 
-function clampStepIndex(value, max = state.points.length) {
+function clampStepIndex(value, max = pointsInSegment(state.activeSegmentId).length) {
   const n = Math.round(Number(value));
   if (!Number.isFinite(n)) return null;
   return clamp(n, 1, Math.max(1, max));
@@ -673,10 +758,10 @@ function setManualOrderFromList(points) {
 }
 
 function movePointToStep(pointId, targetIndex) {
-  const ordered = sortedPoints().filter((point) => point.id !== pointId);
   const point = state.points.find((p) => p.id === pointId);
   if (!point) return false;
-  const insertAt = clampStepIndex(targetIndex, state.points.length) - 1;
+  const ordered = orderedPoints(state.orderingMode, point.segment_id).filter((p) => p.id !== pointId);
+  const insertAt = clampStepIndex(targetIndex, pointsInSegment(point.segment_id).length) - 1;
   ordered.splice(insertAt, 0, point);
   setManualOrderFromList(ordered);
   return true;
@@ -685,8 +770,8 @@ function movePointToStep(pointId, targetIndex) {
 function sortByEditedStep(pointId, targetIndex) {
   const point = state.points.find((p) => p.id === pointId);
   if (!point) return false;
-  point.step_index = clampStepIndex(targetIndex, state.points.length);
-  const ordered = [...state.points].sort((a, b) => {
+  point.step_index = clampStepIndex(targetIndex, pointsInSegment(point.segment_id).length);
+  const ordered = pointsInSegment(point.segment_id).sort((a, b) => {
     if (a.step_index !== b.step_index) return normalizedStepIndex(a) - normalizedStepIndex(b);
     if (a.id === pointId) return -1;
     if (b.id === pointId) return 1;
@@ -700,7 +785,7 @@ function sortByEditedStep(pointId, targetIndex) {
 function applyStepOrder() {
   const point = selectedPoint();
   if (!point) return;
-  const targetIndex = clampStepIndex(els.selectedStepIndex.value, state.points.length);
+  const targetIndex = clampStepIndex(els.selectedStepIndex.value, pointsInSegment(point.segment_id).length);
   if (!targetIndex) {
     els.selectedStepIndex.value = point.step_index;
     return;
@@ -717,7 +802,7 @@ function applyStepOrder() {
 function moveSelectedPoint(delta) {
   const point = selectedPoint();
   if (!point) return;
-  const targetIndex = clampStepIndex(point.step_index + delta, state.points.length);
+  const targetIndex = clampStepIndex(point.step_index + delta, pointsInSegment(point.segment_id).length);
   if (!targetIndex || targetIndex === point.step_index) return;
   pushHistory();
   movePointToStep(point.id, targetIndex);
@@ -735,10 +820,11 @@ function insertPointRelative(position) {
   if (!reference) return;
   pushHistory();
   const currentTime = els.video.currentTime || reference.timestamp_s || 0;
-  const real = pixelToReal(reference.pixel_x, reference.pixel_y);
+  const real = pixelToReal(reference.pixel_x, reference.pixel_y, reference.segment_id);
   const point = {
     id: globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}_${Math.random()}`,
     video_id: els.videoId.value.trim(),
+    segment_id: reference.segment_id,
     step_index: reference.step_index + (position === "after" ? 1 : 0),
     foot_side: inferInsertedFootSide(reference),
     landmark_type: els.landmarkType.value || reference.landmark_type,
@@ -778,6 +864,7 @@ function deleteSelectedPoint() {
 
 function clearAllAnnotations() {
   const hasAnnotationData = state.points.length
+    || state.segments.some((segment) => segment.directionPoints.length)
     || state.calibration.points.length
     || state.calibration.groundPlanePoints.length
     || state.calibration.directionPoints.length;
@@ -797,6 +884,8 @@ function clearAllAnnotations() {
     cmPerPixel: null
   });
   state.points = [];
+  state.segments = [{ id: "segment_1", label: "Segment 1", directionPoints: [] }];
+  state.activeSegmentId = "segment_1";
   state.selectedPointId = null;
   state.draggingPointId = null;
   state.hoverPointId = null;
@@ -807,34 +896,44 @@ function clearAllAnnotations() {
 function updateSelectedPointFromForm() {
   const point = state.points.find((p) => p.id === state.selectedPointId);
   if (!point) return;
+  const previousSegment = point.segment_id;
+  point.segment_id = els.selectedSegment.value;
   point.foot_side = els.selectedFoot.value;
   point.landmark_type = els.selectedLandmark.value;
   point.confidence = els.selectedConfidence.value;
   point.note = els.selectedNote.value;
+  if (point.segment_id !== previousSegment) {
+    state.activeSegmentId = point.segment_id;
+    Object.assign(point, pixelToReal(point.pixel_x, point.pixel_y, point.segment_id));
+  }
   renderAll();
   setDirty();
 }
 
 function calculations() {
-  const pts = sortedPoints();
-  const rows = pts.map((point) => ({ ...point }));
-  rows.forEach((point, index) => {
-    const previous = rows[index - 1];
-    const previousSame = [...rows].slice(0, index).reverse().find((p) => p.foot_side === point.foot_side);
-    point.step_length_cm = "";
-    point.stride_length_cm = "";
-    point.step_width_cm = "";
-    point.step_time_s = "";
-    if (previous && isReal(point) && isReal(previous)) {
-      point.step_time_s = round(point.timestamp_s - previous.timestamp_s, 3);
-      if (previous.foot_side !== point.foot_side) {
-        point.step_length_cm = round(Math.abs(point.real_x_cm - previous.real_x_cm), 3);
-        point.step_width_cm = round(Math.abs(point.real_y_cm - previous.real_y_cm), 3);
+  const rows = [];
+  state.segments.forEach((segment) => {
+    const segmentRows = orderedPoints(state.orderingMode, segment.id).map((point) => ({ ...point }));
+    segmentRows.forEach((point, index) => {
+      const previous = segmentRows[index - 1];
+      const previousSame = [...segmentRows].slice(0, index).reverse().find((p) => p.foot_side === point.foot_side);
+      point.segment_label = segmentLabel(point.segment_id);
+      point.step_length_cm = "";
+      point.stride_length_cm = "";
+      point.step_width_cm = "";
+      point.step_time_s = "";
+      if (previous && isReal(point) && isReal(previous)) {
+        point.step_time_s = round(point.timestamp_s - previous.timestamp_s, 3);
+        if (previous.foot_side !== point.foot_side) {
+          point.step_length_cm = round(Math.abs(point.real_x_cm - previous.real_x_cm), 3);
+          point.step_width_cm = round(Math.abs(point.real_y_cm - previous.real_y_cm), 3);
+        }
       }
-    }
-    if (previousSame && isReal(point) && isReal(previousSame)) {
-      point.stride_length_cm = round(Math.abs(point.real_x_cm - previousSame.real_x_cm), 3);
-    }
+      if (previousSame && isReal(point) && isReal(previousSame)) {
+        point.stride_length_cm = round(Math.abs(point.real_x_cm - previousSame.real_x_cm), 3);
+      }
+    });
+    rows.push(...segmentRows);
   });
 
   const stepLengths = rows.map((p) => p.step_length_cm).filter(isNumber);
@@ -843,16 +942,22 @@ function calculations() {
   const strideLengths = rows.map((p) => p.stride_length_cm).filter(isNumber);
   const widths = rows.map((p) => p.step_width_cm).filter(isNumber);
   const times = rows.map((p) => p.step_time_s).filter((v) => isNumber(v) && v >= 0);
-  const realRows = rows.filter(isReal);
-  const duration = realRows.length > 1 ? realRows[realRows.length - 1].timestamp_s - realRows[0].timestamp_s : 0;
-  const distance = realRows.length > 1
-    ? Math.max(...realRows.map((p) => p.real_x_cm)) - Math.min(...realRows.map((p) => p.real_x_cm))
-    : 0;
+  const segmentDistances = state.segments.map((segment) => {
+    const realRows = rows.filter((p) => p.segment_id === segment.id && isReal(p));
+    const duration = realRows.length > 1 ? realRows[realRows.length - 1].timestamp_s - realRows[0].timestamp_s : 0;
+    const distance = realRows.length > 1
+      ? Math.max(...realRows.map((p) => p.real_x_cm)) - Math.min(...realRows.map((p) => p.real_x_cm))
+      : 0;
+    return { duration, distance };
+  });
+  const duration = segmentDistances.reduce((sum, item) => sum + Math.max(0, item.duration), 0);
+  const distance = segmentDistances.reduce((sum, item) => sum + Math.max(0, item.distance), 0);
 
   return {
     rows,
     summary: {
       video_id: els.videoId.value.trim(),
+      segment_count: state.segments.length,
       valid_step_count: rows.length,
       mean_step_length_cm: avg(stepLengths),
       mean_left_step_length_cm: avg(leftStepLengths),
@@ -879,17 +984,25 @@ function qualityChecks(calc = calculations()) {
   if (state.calibration.groundPlanePoints.length > 0 && !groundPlaneHomography()) {
     checks.push(["warn", "Ground plane is incomplete. Click four ground points and enter carpet length and width."]);
   }
-  if (!hasGroundPlane && state.calibration.cmPerPixel && state.calibration.directionPoints.length < 2) {
-    checks.push(["warn", "Walking direction is not set. Step length is using the calibration line as the forward axis."]);
+  const segmentsMissingDirection = state.segments
+    .filter((segment) => pointsInSegment(segment.id).length > 0 && segment.directionPoints.length < 2);
+  if (!hasGroundPlane && state.calibration.cmPerPixel && segmentsMissingDirection.length) {
+    checks.push(["warn", `${segmentsMissingDirection.length} annotated segment(s) do not have their own walking direction. Step length is using the calibration line as the forward axis there.`]);
   }
+  const shortSegments = state.segments
+    .map((segment) => ({ segment, count: pointsInSegment(segment.id).length }))
+    .filter((item) => item.count > 0 && item.count < 6);
   if (state.points.length < 6) checks.push(["warn", "Fewer than 6 footstep points. MVP acceptance requires at least 6 consecutive points."]);
-  else checks.push(["ok", `${state.points.length} footstep points annotated.`]);
+  else checks.push(["ok", `${state.points.length} footstep points annotated across ${state.segments.length} segment(s).`]);
+  if (shortSegments.length) {
+    checks.push(["warn", `${shortSegments.length} segment(s) have fewer than 6 points; review segment-level metrics before use.`]);
+  }
 
   const rows = calc.rows;
-  const sameFootPairs = rows.filter((p, i) => i > 0 && rows[i - 1].foot_side === p.foot_side).length;
+  const sameFootPairs = rows.filter((p, i) => i > 0 && rows[i - 1].segment_id === p.segment_id && rows[i - 1].foot_side === p.foot_side).length;
   if (sameFootPairs) checks.push(["warn", `${sameFootPairs} adjacent events have the same foot label.`]);
 
-  const negativeTime = rows.filter((p, i) => i > 0 && p.timestamp_s < rows[i - 1].timestamp_s).length;
+  const negativeTime = rows.filter((p, i) => i > 0 && rows[i - 1].segment_id === p.segment_id && p.timestamp_s < rows[i - 1].timestamp_s).length;
   if (negativeTime) checks.push(["error", "Timestamps are not increasing."]);
 
   const abnormalSteps = rows.filter((p) => isNumber(p.step_length_cm) && (p.step_length_cm < 10 || p.step_length_cm > 140)).length;
@@ -915,8 +1028,11 @@ function qualityChecks(calc = calculations()) {
 
 function renderAll() {
   state.calibration = normalizeCalibration(state.calibration);
+  state.segments = normalizeSegments(state.segments, state.points);
+  if (!state.segments.some((segment) => segment.id === state.activeSegmentId)) state.activeSegmentId = state.segments[0].id;
   renumberPoints();
   updateCalibrationScale();
+  renderSegmentControls();
   renderCalibrationStatus();
   renderSelectedEditor();
   renderTable();
@@ -926,6 +1042,15 @@ function renderAll() {
   draw();
   updateUndoRedo();
   updatePointActionButtons();
+}
+
+function renderSegmentControls() {
+  const options = state.segments.map((segment) => {
+    const selected = segment.id === state.activeSegmentId ? " selected" : "";
+    const count = pointsInSegment(segment.id).length;
+    return `<option value="${escapeHtml(segment.id)}"${selected}>${escapeHtml(segment.label)} (${count})</option>`;
+  }).join("");
+  els.segmentSelect.innerHTML = options;
 }
 
 function renderCalibrationStatus() {
@@ -949,14 +1074,15 @@ function renderCalibrationStatus() {
     els.groundStatus.textContent = "Ground plane not set";
   }
 
-  if (c.directionPoints.length === 2) {
-    els.directionStatus.textContent = "Walking direction set. X = forward projection, Y = perpendicular width.";
-  } else if (c.directionPoints.length === 1) {
-    els.directionStatus.textContent = "Direction point 1 set. Click point 2 along the walking direction.";
+  const segment = activeSegment();
+  if (segment.directionPoints.length === 2) {
+    els.directionStatus.textContent = `${segment.label} direction set. X = forward projection, Y = perpendicular width.`;
+  } else if (segment.directionPoints.length === 1) {
+    els.directionStatus.textContent = `${segment.label} direction point 1 set. Click point 2 along this straight walking direction.`;
   } else if (c.points.length === 2) {
-    els.directionStatus.textContent = "Walking direction not set. Using calibration line as X axis.";
+    els.directionStatus.textContent = `${segment.label} direction not set. Using calibration line as X axis.`;
   } else {
-    els.directionStatus.textContent = "Walking direction not set";
+    els.directionStatus.textContent = `${segment.label} direction not set`;
   }
 }
 
@@ -965,7 +1091,11 @@ function renderSelectedEditor() {
   els.selectedEmpty.hidden = Boolean(point);
   els.selectedForm.hidden = !point;
   if (!point) return;
-  els.selectedStepIndex.max = String(Math.max(1, state.points.length));
+  els.selectedSegment.innerHTML = state.segments.map((segment) => {
+    const selected = segment.id === point.segment_id ? " selected" : "";
+    return `<option value="${escapeHtml(segment.id)}"${selected}>${escapeHtml(segment.label)}</option>`;
+  }).join("");
+  els.selectedStepIndex.max = String(Math.max(1, pointsInSegment(point.segment_id).length));
   els.selectedStepIndex.value = point.step_index;
   els.selectedFoot.value = point.foot_side;
   els.selectedLandmark.value = point.landmark_type;
@@ -981,6 +1111,7 @@ function renderTable() {
     const tr = document.createElement("tr");
     tr.className = point.id === state.selectedPointId ? "selected-row" : "";
     tr.innerHTML = `
+      <td>${escapeHtml(point.segment_label || segmentLabel(point.segment_id))}</td>
       <td>${point.step_index}</td>
       <td>${escapeHtml(point.foot_side)}</td>
       <td>${point.frame_index}</td>
@@ -997,6 +1128,7 @@ function renderTable() {
 function renderResults() {
   const summary = calculations().summary;
   const metrics = [
+    ["Segments", summary.segment_count],
     ["Valid steps", summary.valid_step_count],
     ["Mean step length", cm(summary.mean_step_length_cm)],
     ["Left step length", cm(summary.mean_left_step_length_cm)],
@@ -1055,7 +1187,7 @@ function drawCalibration(ctx) {
 }
 
 function drawDirection(ctx) {
-  const pts = state.calibration.directionPoints.map(calibrationPointToCanvas);
+  const pts = (activeSegment().directionPoints || []).map(calibrationPointToCanvas);
   if (!pts.length) return;
   ctx.strokeStyle = "#8a5bb8";
   ctx.fillStyle = "#8a5bb8";
@@ -1114,30 +1246,32 @@ function drawAxes(ctx) {
 
 function drawFootsteps(ctx) {
   const pts = sortedPoints();
-  if (pts.length > 1) {
+  state.segments.forEach((segment) => {
+    const segmentPoints = orderedPoints(state.orderingMode, segment.id);
+    if (segmentPoints.length <= 1) return;
     ctx.strokeStyle = "rgba(65, 83, 101, 0.5)";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    pts.forEach((point, index) => {
+    segmentPoints.forEach((point, index) => {
       const p = videoToCanvas(point);
       if (index === 0) ctx.moveTo(p.x, p.y);
       else ctx.lineTo(p.x, p.y);
     });
     ctx.stroke();
-  }
+  });
 
   pts.forEach((point) => {
     const p = videoToCanvas(point);
     const color = point.foot_side === "left" ? "#2f80ed" : "#f2994a";
     const isSelected = point.id === state.selectedPointId;
     circle(ctx, p.x, p.y, isSelected ? 9 : 7, color, "#ffffff", isSelected ? 3 : 2);
-    label(ctx, String(point.step_index), p.x + 10, p.y - 10, color);
+    const text = state.segments.length > 1 ? `${segmentIndex(point.segment_id)}.${point.step_index}` : String(point.step_index);
+    label(ctx, text, p.x + 10, p.y - 10, color);
   });
 }
 
 function drawMeasurements(ctx) {
   const rows = calculations().rows;
-  const basis = projectionBasis();
   const groundToImage = groundPlaneImageHomography();
   ctx.font = "12px Segoe UI, Arial, sans-serif";
   rows.forEach((point, index) => {
@@ -1162,7 +1296,14 @@ function drawMeasurements(ctx) {
       ctx.stroke();
       ctx.setLineDash([]);
       label(ctx, `${formatNumber(point.step_length_cm, 1)} cm`, (a.x + projected.x) / 2 + 4, (a.y + projected.y) / 2 + 4, "#405468");
-    } else if (basis) {
+    } else {
+      const basis = projectionBasis(point.segment_id);
+      if (!basis) {
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2;
+        label(ctx, `${formatNumber(point.step_length_cm, 1)} cm`, mx + 4, my + 4, "#405468");
+        return;
+      }
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const projected = {
@@ -1181,10 +1322,6 @@ function drawMeasurements(ctx) {
       ctx.stroke();
       ctx.setLineDash([]);
       label(ctx, `${formatNumber(point.step_length_cm, 1)} cm`, (a.x + projected.x) / 2 + 4, (a.y + projected.y) / 2 + 4, "#405468");
-    } else {
-      const mx = (a.x + b.x) / 2;
-      const my = (a.y + b.y) / 2;
-      label(ctx, `${formatNumber(point.step_length_cm, 1)} cm`, mx + 4, my + 4, "#405468");
     }
   });
 }
@@ -1227,11 +1364,13 @@ function arrow(ctx, x1, y1, x2, y2) {
 function exportProjectJson() {
   const data = {
     app: "AnnoS",
-    version: "1.3.0",
+    version: "1.4.0",
     saved_at: new Date().toISOString(),
     metadata: metadata(),
     video_meta: state.videoMeta,
     calibration: state.calibration,
+    segments: state.segments,
+    active_segment_id: state.activeSegmentId,
     ordering_mode: state.orderingMode,
     points: state.points,
     calculations: calculations()
@@ -1252,6 +1391,8 @@ function importProjectJson(file) {
       els.knownDistance.value = state.calibration.knownDistanceCm || 100;
       if (!els.scaleNote.value && state.calibration.note) els.scaleNote.value = state.calibration.note;
       state.points = data.points || [];
+      state.segments = normalizeSegments(data.segments, state.points);
+      state.activeSegmentId = data.active_segment_id || data.activeSegmentId || state.segments[0].id;
       state.orderingMode = data.ordering_mode || data.orderingMode || "time";
       state.selectedPointId = null;
       recalcRealCoordinates();
@@ -1296,6 +1437,8 @@ function exportCsvs() {
     carpet_length_cm: md.carpet_length_cm,
     carpet_width_cm: md.carpet_width_cm,
     calibration_method: calibrationMethod(),
+    segment_count: state.segments.length,
+    active_segment_id: state.activeSegmentId,
     scale_note: md.scale_note,
     usability_grade: md.usability_grade,
     reviewer: md.reviewer,
@@ -1305,6 +1448,8 @@ function exportCsvs() {
 
   const annotationRows = calc.rows.map((p) => ({
     video_id: md.video_id,
+    segment_id: p.segment_id,
+    segment_label: p.segment_label || segmentLabel(p.segment_id),
     step_index: p.step_index,
     foot_side: p.foot_side,
     landmark_type: p.landmark_type,
@@ -1466,7 +1611,7 @@ els.fpsInput.addEventListener("input", () => {
   setDirty();
 }));
 
-[els.selectedFoot, els.selectedLandmark, els.selectedConfidence, els.selectedNote].forEach((el) => {
+[els.selectedSegment, els.selectedFoot, els.selectedLandmark, els.selectedConfidence, els.selectedNote].forEach((el) => {
   el.addEventListener("input", updateSelectedPointFromForm);
 });
 
@@ -1523,7 +1668,7 @@ els.canvas.addEventListener("pointermove", (event) => {
       const vp = videoPointFromEvent(event);
       point.pixel_x = round(vp.x, 3);
       point.pixel_y = round(vp.y, 3);
-      Object.assign(point, pixelToReal(vp.x, vp.y));
+      Object.assign(point, pixelToReal(vp.x, vp.y, point.segment_id));
       renderAll();
       setDirty();
     }
@@ -1533,7 +1678,7 @@ els.canvas.addEventListener("pointermove", (event) => {
   const hit = hitTest(event);
   state.hoverPointId = hit ? hit.id : null;
   if (hit) {
-    const text = `#${hit.step_index} ${hit.foot_side}, frame ${hit.frame_index}, ${formatNumber(hit.timestamp_s, 3)}s`;
+    const text = `${segmentLabel(hit.segment_id)} #${hit.step_index} ${hit.foot_side}, frame ${hit.frame_index}, ${formatNumber(hit.timestamp_s, 3)}s`;
     els.tooltip.textContent = text;
     els.tooltip.hidden = false;
     els.tooltip.style.left = `${event.clientX + 12}px`;
@@ -1568,6 +1713,12 @@ els.leftSidebarToggle.addEventListener("click", () => toggleSidebar("left"));
 els.rightSidebarToggle.addEventListener("click", () => toggleSidebar("right"));
 els.undoBtn.addEventListener("click", undo);
 els.redoBtn.addEventListener("click", redo);
+els.segmentSelect.addEventListener("change", () => {
+  state.activeSegmentId = els.segmentSelect.value;
+  renderAll();
+  setDirty();
+});
+els.newSegmentBtn.addEventListener("click", createSegment);
 els.applyStepOrderBtn.addEventListener("click", applyStepOrder);
 els.moveStepUpBtn.addEventListener("click", () => moveSelectedPoint(-1));
 els.moveStepDownBtn.addEventListener("click", () => moveSelectedPoint(1));

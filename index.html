@@ -170,6 +170,12 @@
           <section class="panel-section">
             <h2>Point Defaults</h2>
             <div class="form-grid">
+              <label class="wide">Straight Segment
+                <select id="segmentSelect"></select>
+              </label>
+              <div class="wide order-actions">
+                <button id="newSegmentBtn" class="primary-btn small" type="button">New Segment</button>
+              </div>
               <label>Landmark
                 <select id="landmarkType">
                   <option value="ankle projection">ankle projection</option>
@@ -197,6 +203,7 @@
               <table>
                 <thead>
                   <tr>
+                    <th>Seg</th>
                     <th>#</th>
                     <th>Foot</th>
                     <th>Frame</th>
@@ -215,6 +222,9 @@
             <h2>Selected Point</h2>
             <div id="selectedEmpty" class="muted">No point selected.</div>
             <div id="selectedForm" class="form-grid" hidden>
+              <label class="wide">Segment
+                <select id="selectedSegment"></select>
+              </label>
               <label>Step #
                 <input id="selectedStepIndex" type="number" min="1" step="1" />
               </label>
