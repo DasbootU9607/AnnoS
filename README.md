@@ -11,7 +11,7 @@ The application runs entirely in the browser. Video files and annotation data st
 - Calibrate pixel distance to real-world centimeters using a two-point reference.
 - Convert foot points to physical ground-plane coordinates using a four-point carpet/ground rectangle.
 - Set a separate walking-direction axis for projected step length and stride length.
-- Split annotation into straight walking segments so turn-arounds, end-of-walk pacing, and restarts do not connect into gait metrics.
+- Split annotation into typed segments so straight walking, turn-arounds, end-of-walk pacing, restarts, and excluded portions stay separable.
 - Annotate left and right foot contact points on the video frame, including ankle ground-projection points for PosePro-style ankle-based validation.
 - Edit annotations by selecting, dragging, inserting before or after a selected point, deleting, undoing, redoing, changing step order, and updating point metadata.
 - Clear all annotation, calibration, ground-plane, and direction points with a confirmation prompt.
@@ -32,22 +32,31 @@ No installation, build step, or backend service is required.
 2. Fill in video metadata such as video ID, subject ID, reviewer, camera angle, and FPS.
 3. Use **Calibrate** mode to select two reference points and enter their known distance.
 4. For perspective videos, enter carpet length and width, then use **Ground** mode to click four ground-plane rectangle corners in order: G1 `(0,0)`, G2 `(length,0)`, G3 `(length,width)`, G4 `(0,width)`. G1 to G2 should follow the walking direction.
-5. Use **Segment 1** for the first stable straight-walking portion. Exclude turn-arounds, end-of-walk pacing, hesitation, and restart steps from that segment.
-6. If the subject turns around and begins another stable straight walk, click **New Segment** before marking the return path. Step numbers restart at 1 within each segment.
+5. Use **Segment 1** with type `straight` for the first stable straight-walking portion. Do not mix turn-arounds, end-of-walk pacing, hesitation, or restart steps into that segment.
+6. If the subject turns around or begins another behavior, click **New Segment** and set its type: `straight`, `turn`, `pacing`, `start/stop`, `PosePro include`, or `exclude`. Step numbers restart at 1 within each segment.
 7. If a full ground plane is not available, use **Direction** mode in each segment to click two points along that segment's walking direction.
 8. Choose the intended landmark type. For PosePro validation, use `ankle projection` and mark the ground point vertically below the visible ankle; if the ankle is unclear, approximate the rear-third sole contact area consistently.
 9. Use **Left** and **Right** modes to mark foot contact points.
 10. To repair a sequence, select a point and use **Insert Before**, **Insert After**, **Delete**, **Move Up**, **Move Down**, or edit **Step #**. **Auto shift sequence** moves the selected point to the target number and shifts the remaining points inside the same segment; **manual sort by #** sorts by the edited number and then normalizes the segment sequence.
-11. Review computed metrics and quality checks.
+11. Review computed metrics and quality checks. The dashboard separates `straight_only` metrics for standard gait truth from `full_trial` metrics for PosePro raw-output alignment.
 12. Save the project as JSON or export CSV files.
+
+## Segment Types
+
+- `straight`: stable straight walking. Included in both `straight_only` and `full_trial` summaries.
+- `turn`: turn-around steps. Excluded from `straight_only`, included in `full_trial`.
+- `pacing`: end-of-walk pacing or wandering. Excluded from `straight_only`, included in `full_trial`.
+- `start/stop`: acceleration, deceleration, hesitation, or restart steps. Excluded from `straight_only`, included in `full_trial`.
+- `PosePro include`: any other non-standard step that should be included only when matching PosePro's whole-video output.
+- `exclude`: annotated for traceability but excluded from both summary metric sets.
 
 ## Exported Files
 
 AnnoS exports three CSV files:
 
 - `video_metadata.csv`: video-level metadata, calibration information, and review notes.
-- `manual_footstep_annotations.csv`: point-level annotation data including segment ID/label, frame index, timestamp, pixel coordinates, calibrated coordinates, side, confidence, landmark, and derived gait metrics.
-- `manual_gait_truth_summary.csv`: video-level gait summary metrics.
+- `manual_footstep_annotations.csv`: point-level annotation data including segment ID/label/type, frame index, timestamp, pixel coordinates, calibrated coordinates, side, confidence, landmark, and derived gait metrics.
+- `manual_gait_truth_summary.csv`: two video-level gait summary rows: `straight_only` for standard gait truth and `full_trial` for PosePro raw-output alignment.
 
 Project JSON files preserve the current annotation session and can be loaded back into AnnoS later.
 

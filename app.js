@@ -40,6 +40,7 @@ const els = {
   landmarkType: $("landmarkType"),
   confidence: $("confidence"),
   segmentSelect: $("segmentSelect"),
+  segmentTypeSelect: $("segmentTypeSelect"),
   newSegmentBtn: $("newSegmentBtn"),
   selectedEmpty: $("selectedEmpty"),
   selectedForm: $("selectedForm"),
@@ -111,6 +112,15 @@ const state = {
   redo: []
 };
 
+const SEGMENT_TYPES = [
+  { value: "straight", label: "straight", straight: true, full: true },
+  { value: "turn", label: "turn", straight: false, full: true },
+  { value: "pacing", label: "pacing", straight: false, full: true },
+  { value: "start_stop", label: "start/stop", straight: false, full: true },
+  { value: "posepro_include", label: "PosePro include", straight: false, full: true },
+  { value: "exclude", label: "exclude", straight: false, full: false }
+];
+
 function metadata() {
   return {
     video_id: els.videoId.value.trim(),
@@ -139,10 +149,11 @@ function calibrationMethod() {
 function normalizeSegments(segments = [], points = state.points) {
   const source = Array.isArray(segments) && segments.length
     ? segments
-    : [{ id: "segment_1", label: "Segment 1", directionPoints: state.calibration.directionPoints || [] }];
+    : [{ id: "segment_1", label: "Segment 1", type: "straight", directionPoints: state.calibration.directionPoints || [] }];
   const normalized = source.map((segment, index) => ({
     id: segment.id || `segment_${index + 1}`,
     label: segment.label || segment.name || `Segment ${index + 1}`,
+    type: normalizeSegmentType(segment.type),
     directionPoints: Array.isArray(segment.directionPoints) ? segment.directionPoints : []
   }));
   const validIds = new Set(normalized.map((segment) => segment.id));
@@ -150,6 +161,14 @@ function normalizeSegments(segments = [], points = state.points) {
     if (!validIds.has(point.segment_id)) point.segment_id = normalized[0].id;
   });
   return normalized;
+}
+
+function normalizeSegmentType(type) {
+  return SEGMENT_TYPES.some((item) => item.value === type) ? type : "straight";
+}
+
+function segmentTypeMeta(type) {
+  return SEGMENT_TYPES.find((item) => item.value === type) || SEGMENT_TYPES[0];
 }
 
 function segmentById(id) {
@@ -170,6 +189,10 @@ function segmentLabel(id) {
   return segment?.label || `Segment ${segmentIndex(id)}`;
 }
 
+function segmentTypeLabel(type) {
+  return segmentTypeMeta(type).label;
+}
+
 function pointsInSegment(segmentId) {
   return state.points.filter((point) => point.segment_id === segmentId);
 }
@@ -186,6 +209,7 @@ function createSegment() {
   state.segments.push({
     id,
     label: `Segment ${state.segments.length + 1}`,
+    type: "straight",
     directionPoints: []
   });
   state.activeSegmentId = id;
@@ -884,7 +908,7 @@ function clearAllAnnotations() {
     cmPerPixel: null
   });
   state.points = [];
-  state.segments = [{ id: "segment_1", label: "Segment 1", directionPoints: [] }];
+  state.segments = [{ id: "segment_1", label: "Segment 1", type: "straight", directionPoints: [] }];
   state.activeSegmentId = "segment_1";
   state.selectedPointId = null;
   state.draggingPointId = null;
@@ -918,6 +942,8 @@ function calculations() {
       const previous = segmentRows[index - 1];
       const previousSame = [...segmentRows].slice(0, index).reverse().find((p) => p.foot_side === point.foot_side);
       point.segment_label = segmentLabel(point.segment_id);
+      point.segment_type = normalizeSegmentType(segment.type);
+      point.segment_type_label = segmentTypeLabel(point.segment_type);
       point.step_length_cm = "";
       point.stride_length_cm = "";
       point.step_width_cm = "";
@@ -936,14 +962,29 @@ function calculations() {
     rows.push(...segmentRows);
   });
 
+  const straightRows = rows.filter((point) => segmentTypeMeta(point.segment_type).straight);
+  const fullTrialRows = rows.filter((point) => segmentTypeMeta(point.segment_type).full);
+
+  return {
+    rows,
+    summary: buildSummary(straightRows, "straight_only"),
+    summaries: {
+      straight_only: buildSummary(straightRows, "straight_only"),
+      full_trial: buildSummary(fullTrialRows, "full_trial")
+    }
+  };
+}
+
+function buildSummary(rows, metricSet) {
   const stepLengths = rows.map((p) => p.step_length_cm).filter(isNumber);
   const leftStepLengths = rows.filter((p) => p.foot_side === "left").map((p) => p.step_length_cm).filter(isNumber);
   const rightStepLengths = rows.filter((p) => p.foot_side === "right").map((p) => p.step_length_cm).filter(isNumber);
   const strideLengths = rows.map((p) => p.stride_length_cm).filter(isNumber);
   const widths = rows.map((p) => p.step_width_cm).filter(isNumber);
   const times = rows.map((p) => p.step_time_s).filter((v) => isNumber(v) && v >= 0);
-  const segmentDistances = state.segments.map((segment) => {
-    const realRows = rows.filter((p) => p.segment_id === segment.id && isReal(p));
+  const segmentIds = [...new Set(rows.map((point) => point.segment_id))];
+  const segmentDistances = segmentIds.map((segmentId) => {
+    const realRows = rows.filter((p) => p.segment_id === segmentId && isReal(p));
     const duration = realRows.length > 1 ? realRows[realRows.length - 1].timestamp_s - realRows[0].timestamp_s : 0;
     const distance = realRows.length > 1
       ? Math.max(...realRows.map((p) => p.real_x_cm)) - Math.min(...realRows.map((p) => p.real_x_cm))
@@ -954,23 +995,21 @@ function calculations() {
   const distance = segmentDistances.reduce((sum, item) => sum + Math.max(0, item.distance), 0);
 
   return {
-    rows,
-    summary: {
-      video_id: els.videoId.value.trim(),
-      segment_count: state.segments.length,
-      valid_step_count: rows.length,
-      mean_step_length_cm: avg(stepLengths),
-      mean_left_step_length_cm: avg(leftStepLengths),
-      mean_right_step_length_cm: avg(rightStepLengths),
-      mean_stride_length_cm: avg(strideLengths),
-      mean_step_width_cm: avg(widths),
-      mean_step_time_s: avg(times),
-      gait_speed_cm_s: duration > 0 ? round(distance / duration, 3) : "",
-      annotation_quality: els.usabilityGrade.value,
-      truth_source: "Manual video annotation",
-      calibration_method: calibrationMethod(),
-      note: els.videoNote.value.trim()
-    }
+    video_id: els.videoId.value.trim(),
+    metric_set: metricSet,
+    segment_count: segmentIds.length,
+    valid_step_count: rows.length,
+    mean_step_length_cm: avg(stepLengths),
+    mean_left_step_length_cm: avg(leftStepLengths),
+    mean_right_step_length_cm: avg(rightStepLengths),
+    mean_stride_length_cm: avg(strideLengths),
+    mean_step_width_cm: avg(widths),
+    mean_step_time_s: avg(times),
+    gait_speed_cm_s: duration > 0 ? round(distance / duration, 3) : "",
+    annotation_quality: els.usabilityGrade.value,
+    truth_source: metricSet === "straight_only" ? "Manual straight-only annotation" : "Manual full-trial annotation",
+    calibration_method: calibrationMethod(),
+    note: els.videoNote.value.trim()
   };
 }
 
@@ -991,11 +1030,21 @@ function qualityChecks(calc = calculations()) {
   }
   const shortSegments = state.segments
     .map((segment) => ({ segment, count: pointsInSegment(segment.id).length }))
-    .filter((item) => item.count > 0 && item.count < 6);
-  if (state.points.length < 6) checks.push(["warn", "Fewer than 6 footstep points. MVP acceptance requires at least 6 consecutive points."]);
-  else checks.push(["ok", `${state.points.length} footstep points annotated across ${state.segments.length} segment(s).`]);
+    .filter((item) => item.count > 0 && normalizeSegmentType(item.segment.type) === "straight" && item.count < 6);
+  const straightCount = calc.summaries.straight_only.valid_step_count;
+  const fullCount = calc.summaries.full_trial.valid_step_count;
+  const nonStraightIncluded = state.segments
+    .filter((segment) => pointsInSegment(segment.id).length > 0 && segmentTypeMeta(segment.type).full && !segmentTypeMeta(segment.type).straight).length;
+  if (straightCount < 6) checks.push(["warn", "Fewer than 6 straight footstep points. Standard gait truth usually needs at least 6 consecutive straight-walk points."]);
+  else checks.push(["ok", `${straightCount} straight footstep points available for standard gait truth.`]);
+  if (nonStraightIncluded) {
+    checks.push(["warn", `${nonStraightIncluded} non-straight segment(s) are included in full-trial metrics for PosePro alignment only.`]);
+  }
+  if (fullCount !== state.points.length) {
+    checks.push(["ok", `${state.points.length - fullCount} point(s) are in excluded segments and will not enter summary metrics.`]);
+  }
   if (shortSegments.length) {
-    checks.push(["warn", `${shortSegments.length} segment(s) have fewer than 6 points; review segment-level metrics before use.`]);
+    checks.push(["warn", `${shortSegments.length} straight segment(s) have fewer than 6 points; review segment-level metrics before use.`]);
   }
 
   const rows = calc.rows;
@@ -1048,9 +1097,11 @@ function renderSegmentControls() {
   const options = state.segments.map((segment) => {
     const selected = segment.id === state.activeSegmentId ? " selected" : "";
     const count = pointsInSegment(segment.id).length;
-    return `<option value="${escapeHtml(segment.id)}"${selected}>${escapeHtml(segment.label)} (${count})</option>`;
+    return `<option value="${escapeHtml(segment.id)}"${selected}>${escapeHtml(segment.label)} - ${escapeHtml(segmentTypeLabel(segment.type))} (${count})</option>`;
   }).join("");
   els.segmentSelect.innerHTML = options;
+  const segment = activeSegment();
+  els.segmentTypeSelect.value = normalizeSegmentType(segment.type);
 }
 
 function renderCalibrationStatus() {
@@ -1093,7 +1144,7 @@ function renderSelectedEditor() {
   if (!point) return;
   els.selectedSegment.innerHTML = state.segments.map((segment) => {
     const selected = segment.id === point.segment_id ? " selected" : "";
-    return `<option value="${escapeHtml(segment.id)}"${selected}>${escapeHtml(segment.label)}</option>`;
+    return `<option value="${escapeHtml(segment.id)}"${selected}>${escapeHtml(segment.label)} - ${escapeHtml(segmentTypeLabel(segment.type))}</option>`;
   }).join("");
   els.selectedStepIndex.max = String(Math.max(1, pointsInSegment(point.segment_id).length));
   els.selectedStepIndex.value = point.step_index;
@@ -1112,6 +1163,7 @@ function renderTable() {
     tr.className = point.id === state.selectedPointId ? "selected-row" : "";
     tr.innerHTML = `
       <td>${escapeHtml(point.segment_label || segmentLabel(point.segment_id))}</td>
+      <td>${escapeHtml(point.segment_type_label || segmentTypeLabel(point.segment_type))}</td>
       <td>${point.step_index}</td>
       <td>${escapeHtml(point.foot_side)}</td>
       <td>${point.frame_index}</td>
@@ -1126,17 +1178,18 @@ function renderTable() {
 }
 
 function renderResults() {
-  const summary = calculations().summary;
+  const calc = calculations();
+  const summary = calc.summaries.straight_only;
+  const full = calc.summaries.full_trial;
   const metrics = [
-    ["Segments", summary.segment_count],
-    ["Valid steps", summary.valid_step_count],
-    ["Mean step length", cm(summary.mean_step_length_cm)],
-    ["Left step length", cm(summary.mean_left_step_length_cm)],
-    ["Right step length", cm(summary.mean_right_step_length_cm)],
-    ["Mean stride", cm(summary.mean_stride_length_cm)],
-    ["Mean width", cm(summary.mean_step_width_cm)],
-    ["Mean step time", seconds(summary.mean_step_time_s)],
-    ["Gait speed", speed(summary.gait_speed_cm_s)]
+    ["Straight segs", summary.segment_count],
+    ["Straight steps", summary.valid_step_count],
+    ["Straight step", cm(summary.mean_step_length_cm)],
+    ["Straight speed", speed(summary.gait_speed_cm_s)],
+    ["Full segs", full.segment_count],
+    ["Full steps", full.valid_step_count],
+    ["Full step", cm(full.mean_step_length_cm)],
+    ["Full speed", speed(full.gait_speed_cm_s)]
   ];
   els.resultsGrid.innerHTML = metrics.map(([label, value]) => `
     <div class="metric-card"><span>${label}</span><strong>${value}</strong></div>
@@ -1364,7 +1417,7 @@ function arrow(ctx, x1, y1, x2, y2) {
 function exportProjectJson() {
   const data = {
     app: "AnnoS",
-    version: "1.4.0",
+    version: "1.5.0",
     saved_at: new Date().toISOString(),
     metadata: metadata(),
     video_meta: state.videoMeta,
@@ -1438,6 +1491,7 @@ function exportCsvs() {
     carpet_width_cm: md.carpet_width_cm,
     calibration_method: calibrationMethod(),
     segment_count: state.segments.length,
+    segment_type_counts: segmentTypeCountsText(),
     active_segment_id: state.activeSegmentId,
     scale_note: md.scale_note,
     usability_grade: md.usability_grade,
@@ -1450,6 +1504,8 @@ function exportCsvs() {
     video_id: md.video_id,
     segment_id: p.segment_id,
     segment_label: p.segment_label || segmentLabel(p.segment_id),
+    segment_type: p.segment_type,
+    segment_type_label: p.segment_type_label,
     step_index: p.step_index,
     foot_side: p.foot_side,
     landmark_type: p.landmark_type,
@@ -1467,11 +1523,20 @@ function exportCsvs() {
     note: p.note || ""
   }));
 
-  const summaryRow = calc.summary;
+  const summaryRows = [calc.summaries.straight_only, calc.summaries.full_trial];
   downloadText(fileStem("video_metadata", "csv"), toCsv([metaRow]), "text/csv");
   downloadText(fileStem("manual_footstep_annotations", "csv"), toCsv(annotationRows), "text/csv");
-  downloadText(fileStem("manual_gait_truth_summary", "csv"), toCsv([summaryRow]), "text/csv");
+  downloadText(fileStem("manual_gait_truth_summary", "csv"), toCsv(summaryRows), "text/csv");
   setDirty(false);
+}
+
+function segmentTypeCountsText() {
+  const counts = {};
+  state.segments.forEach((segment) => {
+    const type = normalizeSegmentType(segment.type);
+    counts[type] = (counts[type] || 0) + 1;
+  });
+  return Object.entries(counts).map(([type, count]) => `${type}:${count}`).join("; ");
 }
 
 function toCsv(rows) {
@@ -1715,6 +1780,12 @@ els.undoBtn.addEventListener("click", undo);
 els.redoBtn.addEventListener("click", redo);
 els.segmentSelect.addEventListener("change", () => {
   state.activeSegmentId = els.segmentSelect.value;
+  renderAll();
+  setDirty();
+});
+els.segmentTypeSelect.addEventListener("change", () => {
+  const segment = activeSegment();
+  segment.type = normalizeSegmentType(els.segmentTypeSelect.value);
   renderAll();
   setDirty();
 });

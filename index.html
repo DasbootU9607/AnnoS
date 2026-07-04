@@ -170,8 +170,18 @@
           <section class="panel-section">
             <h2>Point Defaults</h2>
             <div class="form-grid">
-              <label class="wide">Straight Segment
+              <label>Segment
                 <select id="segmentSelect"></select>
+              </label>
+              <label>Segment Type
+                <select id="segmentTypeSelect">
+                  <option value="straight">straight</option>
+                  <option value="turn">turn</option>
+                  <option value="pacing">pacing</option>
+                  <option value="start_stop">start/stop</option>
+                  <option value="posepro_include">PosePro include</option>
+                  <option value="exclude">exclude</option>
+                </select>
               </label>
               <div class="wide order-actions">
                 <button id="newSegmentBtn" class="primary-btn small" type="button">New Segment</button>
@@ -204,6 +214,7 @@
                 <thead>
                   <tr>
                     <th>Seg</th>
+                    <th>Type</th>
                     <th>#</th>
                     <th>Foot</th>
                     <th>Frame</th>
