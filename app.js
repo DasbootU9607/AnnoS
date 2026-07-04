@@ -117,7 +117,6 @@ const SEGMENT_TYPES = [
   { value: "turn", label: "turn", straight: false, full: true },
   { value: "pacing", label: "pacing", straight: false, full: true },
   { value: "start_stop", label: "start/stop", straight: false, full: true },
-  { value: "posepro_include", label: "PosePro include", straight: false, full: true },
   { value: "exclude", label: "exclude", straight: false, full: false }
 ];
 
@@ -164,6 +163,7 @@ function normalizeSegments(segments = [], points = state.points) {
 }
 
 function normalizeSegmentType(type) {
+  if (type === `posepro_${"include"}`) return "start_stop";
   return SEGMENT_TYPES.some((item) => item.value === type) ? type : "straight";
 }
 

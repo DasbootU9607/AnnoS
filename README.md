@@ -33,7 +33,7 @@ No installation, build step, or backend service is required.
 3. Use **Calibrate** mode to select two reference points and enter their known distance.
 4. For perspective videos, enter carpet length and width, then use **Ground** mode to click four ground-plane rectangle corners in order: G1 `(0,0)`, G2 `(length,0)`, G3 `(length,width)`, G4 `(0,width)`. G1 to G2 should follow the walking direction.
 5. Use **Segment 1** with type `straight` for the first stable straight-walking portion. Do not mix turn-arounds, end-of-walk pacing, hesitation, or restart steps into that segment.
-6. If the subject turns around or begins another behavior, click **New Segment** and set its type: `straight`, `turn`, `pacing`, `start/stop`, `PosePro include`, or `exclude`. Step numbers restart at 1 within each segment.
+6. If the subject turns around or begins another behavior, click **New Segment** and set its type: `straight`, `turn`, `pacing`, `start/stop`, or `exclude`. Step numbers restart at 1 within each segment.
 7. If a full ground plane is not available, use **Direction** mode in each segment to click two points along that segment's walking direction.
 8. Choose the intended landmark type. For PosePro validation, use `ankle projection` and mark the ground point vertically below the visible ankle; if the ankle is unclear, approximate the rear-third sole contact area consistently.
 9. Use **Left** and **Right** modes to mark foot contact points.
@@ -47,7 +47,6 @@ No installation, build step, or backend service is required.
 - `turn`: turn-around steps. Excluded from `straight_only`, included in `full_trial`.
 - `pacing`: end-of-walk pacing or wandering. Excluded from `straight_only`, included in `full_trial`.
 - `start/stop`: acceleration, deceleration, hesitation, or restart steps. Excluded from `straight_only`, included in `full_trial`.
-- `PosePro include`: any other non-standard step that should be included only when matching PosePro's whole-video output.
 - `exclude`: annotated for traceability but excluded from both summary metric sets.
 
 ## Exported Files
